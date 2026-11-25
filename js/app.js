@@ -17,15 +17,16 @@ const CATS_PADRAO = [
   ['alimentacao', 'Comer fora', 'd', 'estilo'], ['delivery', 'Delivery', 'd', 'estilo'], ['assinaturas', 'Assinaturas', 'd', 'estilo'],
   ['compras', 'Compras', 'd', 'estilo'], ['pessoal', 'Cuidados pessoais', 'd', 'estilo'], ['lazer', 'Lazer', 'd', 'estilo'],
   ['viagem', 'Viagem', 'd', 'estilo'], ['presentes', 'Presentes', 'd', 'estilo'], ['taxas', 'Juros e tarifas', 'd', 'estilo'],
-  ['outros', 'Outros', 'd', 'estilo'], ['investimentos', 'Investimentos e metas', 'd', 'poupanca'],
+  ['outros', 'Outros', 'd', 'estilo'], ['investimentos', 'Investimentos e metas', 'd', 'poupanca'], ['ajuste', 'Ajuste de saldo', 'd', 'ajuste'],
   ['salario', 'Salário', 'r', ''], ['extra', 'Renda extra', 'r', ''], ['rendimentos', 'Rendimentos', 'r', ''], ['reembolso', 'Reembolsos', 'r', ''], ['outras_r', 'Outras receitas', 'r', ''],
 ].map(([id, nome, t, grupo]) => ({ id, nome, t, grupo, orc: 0 }));
-const GRUPOS = { essencial: 'Essencial', estilo: 'Estilo de vida', poupanca: 'Poupança' };
+const GRUPOS = { essencial: 'Essencial', estilo: 'Estilo de vida', poupanca: 'Poupança', ajuste: 'Ajuste (fora das médias)' };
 const cfgPadrao = () => ({ v: 1, cartao: { nome: 'Cartão de crédito', fecha: 29, vence: 5 }, metaTaxa: 0.2, cats: clone(CATS_PADRAO), fixos: [], metas: [], aprend: {}, recIgnorar: [], painel: { ordem: [], ocultos: [], alertasOff: [] } });
 function mergeCfg(c) {
   const d = cfgPadrao(), x = clone(c || {});
   const out = { ...d, ...x, cartao: { ...d.cartao, ...(x.cartao || {}) } };
   for (const k of ['cats', 'fixos', 'metas']) if (!Array.isArray(out[k])) out[k] = d[k];
+  if (!out.cats.some(c => c.id === 'ajuste')) out.cats.push(d.cats.find(c => c.id === 'ajuste'));
   out.aprend = out.aprend || {};
   if (!Array.isArray(out.recIgnorar)) out.recIgnorar = [];
   out.painel = { ordem: [], ocultos: [], alertasOff: [], ...(x.painel || {}) };
@@ -42,6 +43,7 @@ const hoje = () => L.todayISO();
 const cicloAtual = () => L.cicloDe(hoje(), F());
 const catById = id => S.cfg.cats.find(c => c.id === id) || { id, nome: id || 'Sem categoria', t: 'd', grupo: 'estilo', orc: 0 };
 const isPoup = id => catById(id).grupo === 'poupanca';
+const isAjuste = id => catById(id).grupo === 'ajuste';
 function recompute() { S.idx = L.indexar(S.items, F()); S.cache = {}; }
 function M(s) { return S.cache[s] ||= L.mes({ cfg: S.cfg, ovr: S.ovr, atual: cicloAtual() }, s, S.idx); }
 const temDados = m => m.entradas.length > 0;
@@ -153,7 +155,7 @@ function insights(R) {
   if (corrente && p.porDia < 0) out.push({ k: 'estouro', n: 'critico', tit: 'Orçamento variável do ciclo estourado', txt: `Você já passou ${brl0(-p.disponivel)} do que dava para gastar mantendo ${pct(meta)} de poupança. Segure o cartão até o fechamento em ${L.fmtDia(p.jan.fecha)}.`, g: -p.disponivel });
 
   // categorias: orçamento e crescimento
-  for (const c of S.cfg.cats.filter(c => c.t === 'd' && c.grupo !== 'poupanca')) {
+  for (const c of S.cfg.cats.filter(c => c.t === 'd' && c.grupo !== 'poupanca' && c.grupo !== 'ajuste')) {
     const v = fator(c.id), avg = media(x => x.t.porCat[c.id] || 0);
     if (c.orc > 0 && v > c.orc * 1.05) out.push({ k: 'orcamento', n: v > c.orc * 1.25 ? 'critico' : 'atencao', tit: `${c.nome} acima do orçamento`, txt: `${pre}${brl0(v)} contra ${brl0(c.orc)} planejados (${pct(v / c.orc - 1)} a mais).`, g: v - c.orc, cat: c.id });
     else if (avg != null && ant.length >= 2 && avg > 0 && v > avg * 1.25 && v - avg > 80) out.push({ k: 'crescimento', n: 'atencao', tit: `${c.nome} subiu ${pct(v / avg - 1)}`, txt: `${pre}${brl0(v)} no mês contra média de ${brl0(avg)} nos ${ant.length} meses anteriores.`, g: v - avg, cat: c.id });
@@ -176,7 +178,7 @@ function insights(R) {
   const ass = t.porCat.assinaturas || 0;
   if (ass > 0) out.push({ k: 'assinaturas', n: 'info', tit: `Assinaturas: ${brl0(ass * 12)} por ano`, txt: `${brl(ass)} por mês. Cancele o que não usou nos últimos 30 dias; dá para assinar de novo quando quiser.`, cat: 'assinaturas' });
   // gastos formiga
-  const peq = m.entradas.filter(e => e.t === 'd' && e.tipo === 'variavel' && e.v > 0 && e.v <= 50 && !isPoup(e.cat));
+  const peq = m.entradas.filter(e => e.t === 'd' && e.tipo === 'variavel' && e.v > 0 && e.v <= 50 && !isPoup(e.cat) && !isAjuste(e.cat));
   if (peq.length >= 10) out.push({ k: 'formiga', n: renda && sum(peq, e => e.v) > renda * 0.05 ? 'atencao' : 'info', tit: `${peq.length} compras pequenas somam ${brl0(sum(peq, e => e.v))}`, txt: 'Gastos de até R$ 50 passam despercebidos na fatura. Delivery, café e app de corrida costumam ser os maiores.' });
   // reserva
   if (!S.cfg.metas.some(g => /reserva|emerg/i.test(g.nome))) {
@@ -273,7 +275,7 @@ function vPainel(R) {
   const tile = (l, v, s, cls = '') => `<div class="card tile"><span class="lbl">${l}</span><span class="mid num ${cls}">${v}</span><span class="sub">${s}</span></div>`;
   // 50/30/20
   const g = { essencial: 0, estilo: 0, poupanca: 0 };
-  for (const e of m.entradas) if (e.t === 'd') g[catById(e.cat).grupo || 'estilo'] += e.v;
+  for (const e of m.entradas) if (e.t === 'd' && !isAjuste(e.cat)) g[catById(e.cat).grupo || 'estilo'] += e.v;
   g.poupanca += Math.max(0, t.sobra);
   const gt = Math.max(1, t.rec || g.essencial + g.estilo + g.poupanca);
 
@@ -447,7 +449,7 @@ function vExtrato(R) {
 }
 
 /* ---------- Fluxo de caixa (demonstrativo) ---------- */
-const FLUXO_GRUPOS = ['rec', 'fix', 'par', 'var', 'pg'];
+const FLUXO_GRUPOS = ['rec', 'fix', 'par', 'var', 'aju', 'pg'];
 function fluxoAbertos() { try { return new Set(JSON.parse(localStorage.getItem('lc-fluxo') || '[]')); } catch (e) { return new Set(); } }
 function salvarAbertos(st) { try { localStorage.setItem('lc-fluxo', JSON.stringify([...st])); } catch (e) { } }
 function linhasFluxo(R) {
@@ -455,10 +457,10 @@ function linhasFluxo(R) {
   const cols = Array.from({ length: 16 }, (_, k) => L.addMonths(R, k - 3)); // 3 meses antes da data base, ela e os 12 seguintes
   const fechados = [1, 2, 3].map(k => M(L.addMonths(atual, -k))).filter(temDados);
   const catMed = {};
-  for (const m of fechados) for (const e of m.entradas) if (e.t === 'd' && e.tipo === 'variavel') catMed[e.cat] = (catMed[e.cat] || 0) + e.v / fechados.length;
+  for (const m of fechados) for (const e of m.entradas) if (e.t === 'd' && e.tipo === 'variavel' && !isAjuste(e.cat)) catMed[e.cat] = (catMed[e.cat] || 0) + e.v / fechados.length;
   const varMed = sum(Object.values(catMed));
   const fxNome = Object.fromEntries(S.cfg.fixos.map(f => [f.id, f.desc]));
-  const G = { rec: {}, fix: {}, par: {}, var: {} };
+  const G = { rec: {}, fix: {}, par: {}, var: {}, aju: {} };
   const z = () => cols.map(() => 0), poup = z(), cc = z(), conta = z();
   const add = (g, k, nome, i, v) => { (G[g][k] ||= { nome, v: z() }).v[i] += v; };
   cols.forEach((s, i) => {
@@ -466,6 +468,7 @@ function linhasFluxo(R) {
     for (const e of M(s).entradas) {
       if (e.t === 'r') { add('rec', e.cat, catById(e.cat).nome, i, e.v); continue; }
       (e.pg === 'cc' ? cc : conta)[i] += e.v;
+      if (isAjuste(e.cat)) { add('aju', e.id, e.desc, i, e.v); continue; }
       if (e.tipo === 'variavel') { vr[e.cat] = (vr[e.cat] || 0) + e.v; continue; }
       if (isPoup(e.cat)) poup[i] += e.v;
       if (e.tipo === 'fixo') { const k = e.fixoId || e.id; add('fix', k, fxNome[k] || e.desc, i, e.v); }
@@ -476,8 +479,8 @@ function linhasFluxo(R) {
   });
   const tot = g => cols.map((_, i) => sum(Object.values(G[g]), r => r.v[i]));
   const ord = g => Object.values(G[g]).filter(r => r.v.some(v => Math.abs(v) >= 0.5)).sort((a, b) => sum(b.v) - sum(a.v));
-  const rec = tot('rec'), fix = tot('fix'), par = tot('par'), vr = tot('var');
-  const desp = cols.map((_, i) => fix[i] + par[i] + vr[i]), sobra = cols.map((_, i) => rec[i] - desp[i]);
+  const rec = tot('rec'), fix = tot('fix'), par = tot('par'), vr = tot('var'), aju = tot('aju');
+  const desp = cols.map((_, i) => fix[i] + par[i] + vr[i] + aju[i]), sobra = cols.map((_, i) => rec[i] - desp[i]);
   let a = 0; const acum = sobra.map(v => (a += v));
   return {
     cols, atual, varMed, rec, desp, sobra, acum, cc, conta,
@@ -487,6 +490,7 @@ function linhasFluxo(R) {
       { id: 'fix', sinal: '−', nome: 'Despesas fixas', tot: fix, det: ord('fix') },
       { id: 'par', sinal: '−', nome: 'Parcelas', tot: par, det: ord('par') },
       { id: 'var', sinal: '−', nome: 'Gastos variáveis', tot: vr, det: ord('var'), est: true },
+      ...(aju.some(v => Math.abs(v) >= 0.5) ? [{ id: 'aju', sinal: '−', nome: 'Ajustes de saldo', tot: aju, det: ord('aju') }] : []),
     ],
   };
 }
@@ -1145,7 +1149,7 @@ document.addEventListener('click', async e => {
     case 'sugerirOrc': {
       const ant = mesesAnteriores(cicloAtual());
       if (!ant.length) return toast('Preciso de pelo menos um mês fechado com lançamentos.');
-      for (const c of S.cfg.cats.filter(c => c.t === 'd' && c.grupo !== 'poupanca')) {
+      for (const c of S.cfg.cats.filter(c => c.t === 'd' && c.grupo !== 'poupanca' && c.grupo !== 'ajuste')) {
         const avg = sum(ant, x => x.t.porCat[c.id] || 0) / ant.length;
         c.orc = avg > 0 ? Math.ceil(avg * (c.grupo === 'estilo' ? 0.9 : 1) / 10) * 10 : 0;
       }

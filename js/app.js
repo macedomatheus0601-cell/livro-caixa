@@ -452,7 +452,7 @@ function fluxoAbertos() { try { return new Set(JSON.parse(localStorage.getItem('
 function salvarAbertos(st) { try { localStorage.setItem('lc-fluxo', JSON.stringify([...st])); } catch (e) { } }
 function linhasFluxo(R) {
   const atual = cicloAtual();
-  const cols = Array.from({ length: 12 }, (_, k) => L.addMonths(R, k - 5));
+  const cols = Array.from({ length: 16 }, (_, k) => L.addMonths(R, k - 3)); // 3 meses antes da data base, ela e os 12 seguintes
   const fechados = [1, 2, 3].map(k => M(L.addMonths(atual, -k))).filter(temDados);
   const catMed = {};
   for (const m of fechados) for (const e of m.entradas) if (e.t === 'd' && e.tipo === 'variavel') catMed[e.cat] = (catMed[e.cat] || 0) + e.v / fechados.length;

@@ -99,7 +99,27 @@ const L = (() => {
   function mes(state, s, idx) {
     const F = state.cfg.cartao.fecha;
     const ovr = (state.ovr || {})[s] || {};
-    const entradas = [...(idx[s] || []), ...fixosDoMes(state.cfg.fixos, s, ovr, F)];
+    const tx = idx[s] || [], fx = fixosDoMes(state.cfg.fixos, s, ovr, F);
+    // Fixo de cartão reconhecido na fatura: vale o lançamento real (sem duplicar).
+    // Fatura já fechada e importada sem ele: não foi cobrado, não projeta.
+    const fechada = state.atual && s < state.atual && tx.some(e => e.tipo === 'variavel' && e.pg === 'cc' && e.item && (e.item.imp || e.item.fat));
+    const pares = [];
+    fx.forEach((f, i) => {
+      if (f.t !== 'd' || f.pg !== 'cc') return;
+      const k = f.fixo.chave || chaveRec(f.desc);
+      tx.forEach((e, j) => {
+        if (e.tipo !== 'variavel' || e.t !== 'd' || e.pg !== 'cc' || !(e.v > 0) || chaveRec(e.desc) !== k) return;
+        const d = Math.abs(e.v - f.v) / Math.max(1, f.v);
+        if (d <= 0.3) pares.push([d, i, j]);
+      });
+    });
+    pares.sort((a, b) => a[0] - b[0]);
+    const fU = new Map(), eU = new Map();
+    for (const [, i, j] of pares) if (!fU.has(i) && !eU.has(j)) { fU.set(i, j); eU.set(j, i); }
+    const entradas = [
+      ...tx.map((e, j) => eU.has(j) ? { ...e, tipo: 'fixo', fixoId: fx[eU.get(j)].id, reconhecido: true } : e),
+      ...fx.filter((f, i) => !fU.has(i) && !(fechada && f.t === 'd' && f.pg === 'cc')),
+    ];
     const catInfo = Object.fromEntries(state.cfg.cats.map(c => [c.id, c]));
     const t = { rec: 0, recFixa: 0, recVar: 0, desp: 0, despFixa: 0, despVar: 0, despParc: 0, fatura: 0, conta: 0, poupanca: 0, porCat: {}, essenciais: 0 };
     for (const e of entradas) {
@@ -186,6 +206,46 @@ const L = (() => {
   }
   const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
 
-  return { pad, ym, parseYM, addMonths, diffMonths, daysIn, iso, todayISO, fmtYM, fmtYMlong, fmtDia, MESES, ultimoDiaUtil, feriados,
+  /* ---- recorrência e compras parceladas ---- */
+  const chaveRec = s => { const n = norm(s); return n.split(' ').map(w => w.replace(/\d+/g, '')).filter(Boolean).join(' ') || n; };
+  const refDe = (it, F) => it.t === 'd' && it.pg === 'cc' ? (it.fat || cicloDe(it.d, F)) : it.d.slice(0, 7);
+  const origemDe = (it, F) => addMonths(refDe(it, F), -((it.p0 || 1) - 1)); // fatura da 1ª parcela
+  // cobranças do cartão que se repetem: mesma descrição (sem números), valor até 3% diferente,
+  // no máximo uma por fatura, em 2+ faturas quase seguidas e ainda ativa
+  function recorrentes(items, F, fixos, ignorar) {
+    const g = {}; let ate = '';
+    for (const it of items) {
+      if (it.t !== 'd' || it.pg !== 'cc' || (it.n || 1) > 1 || !(it.v > 0)) continue;
+      const ref = refDe(it, F), k = chaveRec(it.desc);
+      if (ref > ate) ate = ref;
+      (g[k] ||= []).push({ it, ref, v: it.v });
+    }
+    const out = [], ign = new Set(ignorar || []);
+    for (const [k, l] of Object.entries(g)) {
+      l.sort((a, b) => a.v - b.v);
+      const cl = [];
+      for (const x of l) { const c = cl[cl.length - 1]; if (c && x.v <= c[0].v * 1.03 + 0.5) c.push(x); else cl.push([x]); }
+      for (const c of cl) {
+        const refs = [...new Set(c.map(x => x.ref))].sort();
+        if (refs.length < 2 || refs.length !== c.length) continue;
+        if (diffMonths(refs[0], refs[refs.length - 1]) > refs.length) continue;
+        if (diffMonths(refs[refs.length - 1], ate) > 1) continue;
+        const u = c.reduce((a, b) => (a.ref > b.ref ? a : b));
+        const id = k + '|' + Math.round(u.v);
+        if (ign.has(id)) continue;
+        if ((fixos || []).some(f => f.t === 'd' && (!f.fim || f.fim >= u.ref) && (f.chave || chaveRec(f.desc)) === k && Math.abs(f.v - u.v) <= Math.max(1, u.v * 0.1))) continue;
+        out.push({ id, chave: k, desc: u.it.desc, v: u.v, cat: u.it.cat, dia: +u.it.d.slice(8, 10), refs, ini: refs[0] });
+      }
+    }
+    return out.sort((a, b) => b.v - a.v);
+  }
+  // mesma compra parcelada lançada mais de uma vez (ex.: importou a 2/12 e depois a 1/12)
+  function comprasDuplicadas(items, F) {
+    const g = {};
+    for (const it of items) if (it.t === 'd' && (it.n || 1) > 1) (g[norm(it.desc) + '|' + it.n + '|' + origemDe(it, F)] ||= []).push(it);
+    return Object.values(g).filter(l => l.length > 1 && l.every(x => Math.abs(x.v / x.n - l[0].v / l[0].n) < 1)).map(l => l.sort((a, b) => (a.p0 || 1) - (b.p0 || 1)));
+  }
+
+  return { chaveRec, refDe, origemDe, recorrentes, comprasDuplicadas, pad, ym, parseYM, addMonths, diffMonths, daysIn, iso, todayISO, fmtYM, fmtYMlong, fmtDia, MESES, ultimoDiaUtil, feriados,
     fechaDia, cicloDe, janelaCiclo, dias, parcelasDe, indexar, fixosDoMes, mes, parseValor, parseData, lerFatura, categorizar, norm };
 })();

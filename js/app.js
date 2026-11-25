@@ -21,12 +21,13 @@ const CATS_PADRAO = [
   ['salario', 'Salário', 'r', ''], ['extra', 'Renda extra', 'r', ''], ['rendimentos', 'Rendimentos', 'r', ''], ['reembolso', 'Reembolsos', 'r', ''], ['outras_r', 'Outras receitas', 'r', ''],
 ].map(([id, nome, t, grupo]) => ({ id, nome, t, grupo, orc: 0 }));
 const GRUPOS = { essencial: 'Essencial', estilo: 'Estilo de vida', poupanca: 'Poupança' };
-const cfgPadrao = () => ({ v: 1, cartao: { nome: 'Cartão de crédito', fecha: 29, vence: 5 }, metaTaxa: 0.2, cats: clone(CATS_PADRAO), fixos: [], metas: [], aprend: {}, painel: { ordem: [], ocultos: [], alertasOff: [] } });
+const cfgPadrao = () => ({ v: 1, cartao: { nome: 'Cartão de crédito', fecha: 29, vence: 5 }, metaTaxa: 0.2, cats: clone(CATS_PADRAO), fixos: [], metas: [], aprend: {}, recIgnorar: [], painel: { ordem: [], ocultos: [], alertasOff: [] } });
 function mergeCfg(c) {
   const d = cfgPadrao(), x = clone(c || {});
   const out = { ...d, ...x, cartao: { ...d.cartao, ...(x.cartao || {}) } };
   for (const k of ['cats', 'fixos', 'metas']) if (!Array.isArray(out[k])) out[k] = d[k];
   out.aprend = out.aprend || {};
+  if (!Array.isArray(out.recIgnorar)) out.recIgnorar = [];
   out.painel = { ordem: [], ocultos: [], alertasOff: [], ...(x.painel || {}) };
   return out;
 }
@@ -42,7 +43,7 @@ const cicloAtual = () => L.cicloDe(hoje(), F());
 const catById = id => S.cfg.cats.find(c => c.id === id) || { id, nome: id || 'Sem categoria', t: 'd', grupo: 'estilo', orc: 0 };
 const isPoup = id => catById(id).grupo === 'poupanca';
 function recompute() { S.idx = L.indexar(S.items, F()); S.cache = {}; }
-function M(s) { return S.cache[s] ||= L.mes({ cfg: S.cfg, ovr: S.ovr }, s, S.idx); }
+function M(s) { return S.cache[s] ||= L.mes({ cfg: S.cfg, ovr: S.ovr, atual: cicloAtual() }, s, S.idx); }
 const temDados = m => m.entradas.length > 0;
 
 /* ===================== armazenamento ===================== */
@@ -134,6 +135,12 @@ function insights(R) {
     const es = m.entradas.filter(e => e.t === 'd' && e.cat === cat);
     return sum(es.filter(e => e.tipo !== 'variavel'), e => e.v) + sum(es.filter(e => e.tipo === 'variavel'), e => e.v) / p.fr;
   };
+  const dupl = L.comprasDuplicadas(S.items, F());
+  if (dupl.length) out.push({ k: 'conferir', n: 'atencao', tit: `${dupl.length === 1 ? 'Uma compra parcelada está' : dupl.length + ' compras parceladas estão'} contada${dupl.length === 1 ? '' : 's'} em dobro`, txt: `${dupl.map(l => `${l[0].desc} (${l[0].n}x)`).join(', ')} entrou mais de uma vez, por faturas importadas fora de ordem. Corrigir mantém um lançamento só.`, acao: 'duplicadas' });
+  if (R >= L.addMonths(atual, -1)) {
+    const rc = L.recorrentes(S.items, F(), S.cfg.fixos, S.cfg.recIgnorar);
+    if (rc.length) out.push({ k: 'recorrentes', n: 'info', tit: `${rc.length} cobranças se repetem todo mês no cartão`, txt: `Somam ${brl0(sum(rc, x => x.v))} por mês (${rc.slice(0, 3).map(x => x.desc).join(', ')}${rc.length > 3 ? '...' : ''}). Cadastre como fixas e o fluxo passa a prever os próximos meses sem esperar a fatura.`, acao: 'recorrentes' });
+  }
   if (!temDados(m)) return out;
   const pre = corrente ? 'No ritmo atual, ' : '';
 
@@ -215,6 +222,10 @@ function render() {
   if (!S.loaded) { main.innerHTML = `<div class="empty"><h2>Abrindo seu livro-caixa</h2><p>Carregando lançamentos, fixos e metas.</p></div>`; return; }
   const v = { painel: vPainel, extrato: vExtrato, fluxo: vFluxo, fixos: vFixos, metas: vMetas, ajustes: vAjustes }[S.view] || vPainel;
   main.innerHTML = v(R);
+  if (S.view === 'fluxo') { // abre a tabela com 2 meses antes do atual à vista
+    const tw = main.querySelector('.dre')?.closest('.tw'), th = tw?.querySelector('thead tr:last-child th.cur'), c0 = tw?.querySelector('thead tr:last-child th');
+    if (th && c0) tw.scrollLeft = Math.max(0, th.offsetLeft - c0.offsetWidth - th.offsetWidth * 2);
+  }
 }
 function renderStatus() {
   const st = { ok: ['sincronizado', 'var(--good)'], pendente: ['enviando…', 'var(--accent)'], conectando: ['conectando', 'var(--ink-3)'], lento: ['offline · salvo no aparelho', 'var(--warn)'], erro: ['erro ao sincronizar', 'var(--bad)'], local: ['só neste navegador', 'var(--warn)'], login: ['desconectado', 'var(--ink-3)'], demo: ['exemplo', 'var(--accent)'] }[S.demo ? 'demo' : S.status] || ['', ''];
@@ -296,7 +307,7 @@ function vPainel(R) {
     atacar: () => {
       const l = ins(), mostra = S.todosInsights ? l : l.slice(0, 5);
       return `<section class="card"><h3>Onde atacar <small>${l.length} pontos</small></h3>
-    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.acao === 'conferir' ? `<button class="btn sm" style="margin-top:8px" data-act="irMes" data-s="${i.s}">Abrir fatura</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
+    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.acao === 'duplicadas' ? `<button class="btn sm" style="margin-top:8px" data-act="corrigirDup">Corrigir agora</button>` : ''}${i.acao === 'recorrentes' ? `<button class="btn sm" style="margin-top:8px" data-act="irRecorrentes">Revisar e cadastrar</button>` : ''}${i.acao === 'conferir' ? `<button class="btn sm" style="margin-top:8px" data-act="irMes" data-s="${i.s}">Abrir fatura</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
     ${l.length > 5 ? `<button class="btn sm" style="margin-top:10px" data-act="todosIns">${S.todosInsights ? 'Mostrar menos' : `Ver todos (${l.length})`}</button>` : ''}
   </section>`;
     },
@@ -422,7 +433,7 @@ function vExtrato(R) {
   const chips = [['todos', 'Todos'], ['cc', 'Cartão'], ['conta', 'Em conta'], ['r', 'Receitas'], ['fixo', 'Fixos'], ['parcela', 'Parcelas']];
   if (f.startsWith('cat:')) chips.push([f, catById(f.slice(4)).nome]);
   const forma = e => e.t === 'r' ? 'Receita' : e.pg === 'cc' ? 'Cartão' : 'Conta';
-  const tag = e => e.tipo === 'fixo' ? `<span class="pill acc">fixo${e.ajustado ? ' · ajustado' : ''}</span>` : e.tipo === 'parcela' ? `<span class="pill">${e.parc}</span>` : '';
+  const tag = e => e.tipo === 'fixo' ? `<span class="pill acc">fixo${e.ajustado ? ' · ajustado' : ''}${e.reconhecido ? ' · na fatura' : ''}</span>` : e.tipo === 'parcela' ? `<span class="pill">${e.parc}</span>` : '';
   const val = e => `<span class="num ${e.t === 'r' ? 'pos' : ''}">${e.t === 'r' ? '+' : ''}${brl(e.t === 'r' ? e.v : -e.v)}</span>`;
   const key = e => `data-act="abrir" data-src="${e.src}" data-id="${esc(e.id)}"`;
   return `<div class="row" style="margin-bottom:12px"><div class="chips">${chips.map(([k, n]) => `<button data-act="filtro" data-f="${esc(k)}" aria-pressed="${f === k}">${esc(n)}</button>`).join('')}</div><span class="sp"></span>
@@ -436,54 +447,114 @@ function vExtrato(R) {
     : `<div class="card empty"><h2>Nada por aqui</h2><p>Use o botão + para lançar, ou importe o CSV da fatura.</p></div>`}`;
 }
 
-/* ---------- Fluxo de caixa ---------- */
+/* ---------- Fluxo de caixa (demonstrativo) ---------- */
+const FLUXO_GRUPOS = ['rec', 'fix', 'par', 'var', 'pg'];
+function fluxoAbertos() { try { return new Set(JSON.parse(localStorage.getItem('lc-fluxo') || '[]')); } catch (e) { return new Set(); } }
+function salvarAbertos(st) { try { localStorage.setItem('lc-fluxo', JSON.stringify([...st])); } catch (e) { } }
 function linhasFluxo(R) {
   const atual = cicloAtual();
   const cols = Array.from({ length: 12 }, (_, k) => L.addMonths(R, k - 5));
   const fechados = [1, 2, 3].map(k => M(L.addMonths(atual, -k))).filter(temDados);
-  const varMed = fechados.length ? sum(fechados, x => x.t.despVar) / fechados.length : 0;
-  const recVarMed = fechados.length ? sum(fechados, x => x.t.recVar) / fechados.length : 0;
-  let acum = 0;
-  const data = cols.map(s => {
-    const t = M(s).t, fut = s > atual;
-    const despVar = fut ? Math.max(t.despVar, varMed) : t.despVar;
-    const recVar = fut ? Math.max(t.recVar, 0) : t.recVar;
-    const rec = t.recFixa + recVar, desp = t.despFixa + t.despParc + despVar, sobra = rec - desp;
-    acum += sobra;
-    return { s, fut, t, recVar, despVar, rec, desp, sobra, acum, taxa: rec ? (rec - (desp - t.poupanca)) / rec : null };
+  const catMed = {};
+  for (const m of fechados) for (const e of m.entradas) if (e.t === 'd' && e.tipo === 'variavel') catMed[e.cat] = (catMed[e.cat] || 0) + e.v / fechados.length;
+  const varMed = sum(Object.values(catMed));
+  const fxNome = Object.fromEntries(S.cfg.fixos.map(f => [f.id, f.desc]));
+  const G = { rec: {}, fix: {}, par: {}, var: {} };
+  const z = () => cols.map(() => 0), poup = z(), cc = z(), conta = z();
+  const add = (g, k, nome, i, v) => { (G[g][k] ||= { nome, v: z() }).v[i] += v; };
+  cols.forEach((s, i) => {
+    const vr = {};
+    for (const e of M(s).entradas) {
+      if (e.t === 'r') { add('rec', e.cat, catById(e.cat).nome, i, e.v); continue; }
+      (e.pg === 'cc' ? cc : conta)[i] += e.v;
+      if (e.tipo === 'variavel') { vr[e.cat] = (vr[e.cat] || 0) + e.v; continue; }
+      if (isPoup(e.cat)) poup[i] += e.v;
+      if (e.tipo === 'fixo') { const k = e.fixoId || e.id; add('fix', k, fxNome[k] || e.desc, i, e.v); }
+      else add('par', e.id, `${e.desc} (${e.n}x)`, i, e.v);
+    }
+    if (s >= atual) for (const [c, v] of Object.entries(catMed)) if ((vr[c] || 0) < v) { cc[i] += v - (vr[c] || 0); vr[c] = v; } // previsão: no mínimo a média
+    for (const [c, v] of Object.entries(vr)) { add('var', c, catById(c).nome, i, v); if (isPoup(c)) poup[i] += v; }
   });
-  return { cols, data, varMed, recVarMed };
+  const tot = g => cols.map((_, i) => sum(Object.values(G[g]), r => r.v[i]));
+  const ord = g => Object.values(G[g]).filter(r => r.v.some(v => Math.abs(v) >= 0.5)).sort((a, b) => sum(b.v) - sum(a.v));
+  const rec = tot('rec'), fix = tot('fix'), par = tot('par'), vr = tot('var');
+  const desp = cols.map((_, i) => fix[i] + par[i] + vr[i]), sobra = cols.map((_, i) => rec[i] - desp[i]);
+  let a = 0; const acum = sobra.map(v => (a += v));
+  return {
+    cols, atual, varMed, rec, desp, sobra, acum, cc, conta,
+    taxa: cols.map((_, i) => rec[i] ? (sobra[i] + poup[i]) / rec[i] : null),
+    grupos: [
+      { id: 'rec', sinal: '+', nome: 'Receitas', tot: rec, det: ord('rec') },
+      { id: 'fix', sinal: '−', nome: 'Despesas fixas', tot: fix, det: ord('fix') },
+      { id: 'par', sinal: '−', nome: 'Parcelas', tot: par, det: ord('par') },
+      { id: 'var', sinal: '−', nome: 'Gastos variáveis', tot: vr, det: ord('var'), est: true },
+    ],
+  };
 }
 function vFluxo(R) {
-  const { data, varMed } = linhasFluxo(R), atual = cicloAtual();
-  const cell = (v, cls = '') => `<td class="r num ${cls}">${v === 0 ? '<span class="mut">–</span>' : brl0(v)}</td>`;
-  const row = (nome, f, cls = '', fn = cell) => `<tr class="${cls}"><td>${nome}</td>${data.map(x => fn(f(x), x.fut && /proj/.test(cls) ? 'proj' : '')).join('')}</tr>`;
-  const catsD = S.cfg.cats.filter(c => c.t === 'd' && data.some(x => x.t.porCat[c.id]));
-  const h = `<div class="row" style="margin-bottom:12px"><div><h2 style="font-size:18px">Fluxo de caixa</h2><p class="sub" style="margin:2px 0 0">5 meses para trás, 6 para frente. Meses futuros contam fixos, parcelas já lançadas e variáveis pela média dos últimos 3 meses fechados (${brl0(varMed)}).</p></div><span class="sp"></span><button class="btn sm" data-act="exportFluxo">Exportar CSV</button></div>
-  <div class="tw"><table class="flux"><thead><tr><th>Ref. (fatura)</th>${data.map(x => `<th class="r ${x.s === atual ? 'cur' : x.fut ? 'fut' : ''}" style="cursor:pointer" data-act="irMes" data-s="${x.s}">${L.fmtYM(x.s)}${x.fut ? '*' : ''}</th>`).join('')}</tr></thead><tbody>
-    <tr class="grp"><td>Entradas</td>${data.map(() => '<td></td>').join('')}</tr>
-    ${row('Receitas fixas', x => x.t.recFixa)}
-    ${row('Receitas variáveis', x => x.recVar)}
-    ${row('Total de receitas', x => x.rec, 'tot')}
-    <tr class="grp"><td>Saídas</td>${data.map(() => '<td></td>').join('')}</tr>
-    ${row('Despesas fixas', x => x.t.despFixa)}
-    ${row('Parcelas', x => x.t.despParc)}
-    ${row('Variáveis', x => x.despVar, 'proj')}
-    ${row('Total de despesas', x => x.desp, 'tot')}
-    ${row('· no cartão (fatura)', x => x.fut ? x.t.fatura + (x.despVar - x.t.despVar) : x.t.fatura, 'proj')}
-    ${row('· em conta', x => x.t.conta)}
-    <tr class="grp"><td>Resultado</td>${data.map(() => '<td></td>').join('')}</tr>
-    ${row('Sobra do mês', x => x.sobra, 'tot', (v, c) => `<td class="r num ${v < 0 ? 'neg' : 'pos'} ${c}">${brl0(v)}</td>`)}
-    ${row('Sobra acumulada', x => x.acum, '', (v) => `<td class="r num ${v < 0 ? 'neg' : ''}">${brl0(v)}</td>`)}
-    ${row('Taxa de poupança', x => x.taxa, '', v => `<td class="r num">${pct(v)}</td>`)}
-    <tr class="grp"><td>Por categoria</td>${data.map(() => '<td></td>').join('')}</tr>
-    ${catsD.map(c => row(esc(c.nome), x => x.t.porCat[c.id] || 0)).join('')}
+  const X = linhasFluxo(R), { cols, atual } = X, ab = fluxoAbertos();
+  const st = s => s < atual ? 'real' : s === atual ? 'aberto' : 'prev';
+  const fmt = v => Math.abs(v) < 0.5 ? '<span class="mut">–</span>' : v < 0 ? `(${brl0(-v)})` : brl0(v);
+  const tds = (arr, est, f = fmt, cls = () => '') => arr.map((v, i) => `<td class="r num ${st(cols[i])} ${est && cols[i] >= atual ? 'est' : ''} ${cls(v)}">${f(v)}</td>`).join('');
+  const chev = '<svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const grupo = g => {
+    const on = ab.has(g.id);
+    return `<tr class="g"><td><button class="fxg" data-act="fxToggle" data-g="${g.id}" aria-expanded="${on}" ${g.det.length ? '' : 'disabled'}>${chev}<span class="sg">(${g.sinal})</span>${g.nome}</button></td>${tds(g.tot, g.est)}</tr>
+    ${g.det.map(d => `<tr class="d" data-of="${g.id}" ${on ? '' : 'hidden'}><td title="${esc(d.nome)}">${esc(d.nome)}</td>${tds(d.v, g.est)}</tr>`).join('')}`;
+  };
+  const bands = [];
+  for (const s of cols) { const k = st(s), b = bands[bands.length - 1]; if (b && b.k === k) b.n++; else bands.push({ k, n: 1 }); }
+  const BN = { real: 'Realizado', aberto: 'Em aberto', prev: 'Previsto' };
+  const pgOn = ab.has('pg');
+  const todosAbertos = FLUXO_GRUPOS.every(g => ab.has(g));
+  return `<div class="row" style="margin-bottom:12px;align-items:flex-end"><div style="min-width:0"><h2 style="font-size:18px">Fluxo de caixa</h2>
+    <p class="sub" style="margin:2px 0 0">Mês de referência = salário do mês + fatura que vence no início do seguinte. Previsão: fixos, parcelas já lançadas e gastos variáveis pela média dos últimos 3 meses fechados (${brl0(X.varMed)}).</p></div>
+    <span class="sp"></span><button class="btn sm" data-act="fxTodos" data-v="${todosAbertos ? 0 : 1}">${todosAbertos ? 'Recolher tudo' : 'Expandir tudo'}</button><button class="btn sm" data-act="exportFluxo">Exportar CSV</button></div>
+  <div class="tw"><table class="flux dre">
+  <thead><tr class="band"><th></th>${bands.map(b => `<th colspan="${b.n}" class="${b.k}"><span>${BN[b.k]}</span></th>`).join('')}</tr>
+  <tr><th>Demonstrativo</th>${cols.map(s => `<th class="r ${st(s)} ${s === atual ? 'cur' : ''}" style="cursor:pointer" data-act="irMes" data-s="${s}">${L.fmtYM(s)}</th>`).join('')}</tr></thead>
+  <tbody>
+    ${grupo(X.grupos[0])}
+    ${X.grupos.slice(1).map(grupo).join('')}
+    <tr class="sub"><td><span class="sg">(=)</span>Total de despesas</td>${tds(X.desp, true)}</tr>
+    <tr class="res"><td><span class="sg">(=)</span>Sobra do mês</td>${tds(X.sobra, true, fmt, v => v < 0 ? 'neg' : v > 0 ? 'pos' : '')}</tr>
+    <tr class="ind"><td>Taxa de poupança</td>${tds(X.taxa, true, v => v == null ? '<span class="mut">–</span>' : pct(v), v => v != null && v < S.cfg.metaTaxa ? 'neg' : '')}</tr>
+    <tr class="ind"><td>Sobra acumulada</td>${tds(X.acum, true, fmt, v => v < 0 ? 'neg' : '')}</tr>
+    <tr class="g memo"><td><button class="fxg" data-act="fxToggle" data-g="pg" aria-expanded="${pgOn}">${chev}<span class="sg"></span>Como foi pago</button></td>${cols.map(s => `<td class="${st(s)}"></td>`).join('')}</tr>
+    <tr class="d" data-of="pg" ${pgOn ? '' : 'hidden'}><td>Fatura do cartão</td>${tds(X.cc, true)}</tr>
+    <tr class="d" data-of="pg" ${pgOn ? '' : 'hidden'}><td>Em conta (Pix, boleto)</td>${tds(X.conta, false)}</tr>
   </tbody></table></div>
-  <p class="sub">* previsão. Clique no mês para abrir o painel dele. Variáveis futuras em itálico.</p>`;
-  return h;
+  <p class="sub">Toque num grupo para abrir o detalhe. Valores em itálico são estimativa. Negativos entre parênteses. Toque no mês para abrir o painel dele.</p>`;
 }
 
 /* ---------- Fixos ---------- */
+function ultimaFaturaFechada() {
+  const atual = cicloAtual();
+  for (let k = 1; k <= 3; k++) {
+    const s = L.addMonths(atual, -k);
+    if ((S.idx[s] || []).some(e => e.tipo === 'variavel' && e.pg === 'cc' && e.item && (e.item.imp || e.item.fat))) return s;
+  }
+  return null;
+}
+const limpaDesc = d => d.replace(/([A-Za-z])\d{3,}/g, '$1').replace(/\s*\*\s*/g, ' ').replace(/\s+/g, ' ').trim();
+function secRecorrentes() {
+  const sug = L.recorrentes(S.items, F(), S.cfg.fixos, S.cfg.recIgnorar);
+  secRecorrentes.sug = sug;
+  const fech = ultimaFaturaFechada();
+  const sumidos = fech ? S.cfg.fixos.filter(f => f.t === 'd' && f.pg === 'cc' && f.chave && (!f.ini || f.ini <= fech) && (!f.fim || f.fim >= fech) && !((S.ovr[fech] || {})[f.id] || {}).skip && !M(fech).entradas.some(e => e.fixoId === f.id)) : [];
+  if (!sug.length && !sumidos.length) return '';
+  return `<section class="card" id="recorrentes" style="margin-bottom:14px">
+  ${sug.length ? `<h3>Cobranças que se repetem no cartão <small>${sug.length} encontradas · ${brl(sum(sug, x => x.v))}/mês</small></h3>
+  <p class="sub" style="margin:4px 0 10px">Encontradas pela descrição e pelo valor nas faturas importadas. Cadastradas como fixas, entram na previsão dos próximos meses. Quando a fatura chega, o lançamento real ocupa o lugar da previsão, sem contar duas vezes.</p>
+  <div class="tw" style="border:0"><table><thead><tr><th></th><th>Descrição</th><th>Faturas</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+  ${sug.map((x, i) => `<tr><td><input type="checkbox" id="rc-${i}" checked aria-label="Cadastrar ${esc(x.desc)}"></td><td>${esc(x.desc)}<span class="d2">${esc(catById(x.cat).nome)} · dia ${x.dia}</span></td><td class="ink2">${x.refs.map(L.fmtYM).join(', ')}</td><td class="r num">${brl(x.v)}</td><td class="r"><button class="btn sm" data-act="recIgnorar" data-i="${i}">Ignorar</button></td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="row" style="margin-top:10px"><span class="sp"></span><button class="btn pri sm" data-act="recCadastrar">Cadastrar marcadas como fixas</button></div>` : ''}
+  ${sumidos.length ? `<h3 ${sug.length ? 'style="margin-top:16px"' : ''}>Não vieram na fatura de ${L.fmtYMlong(fech)}</h3>
+  <p class="sub" style="margin:4px 0 10px">Se cancelou, encerre para sair da previsão. Se só mudou de nome ou de valor, edite o fixo.</p>
+  ${sumidos.map(f => `<div class="row" style="padding:6px 0;border-top:1px solid var(--line)"><span>${esc(f.desc)} <span class="mut num">${brl(f.v)}</span></span><span class="sp"></span><button class="btn sm" data-act="editFixo" data-id="${esc(f.id)}">Editar</button><button class="btn sm" data-act="recEncerrar" data-id="${esc(f.id)}" data-s="${fech}">Encerrar</button></div>`).join('')}` : ''}
+  </section>`;
+}
 function vFixos(R) {
   const fx = S.cfg.fixos, ativos = fx.filter(f => (!f.ini || f.ini <= R) && (!f.fim || f.fim >= R));
   const rec = sum(ativos.filter(f => f.t === 'r'), f => f.v), desp = sum(ativos.filter(f => f.t === 'd'), f => f.v);
@@ -491,11 +562,11 @@ function vFixos(R) {
     const l = fx.filter(f => f.t === t).sort((a, b) => b.v - a.v);
     return `<section class="card"><h3>${tit} <small>${brl(sum(l.filter(f => ativos.includes(f)), f => f.v))}/mês</small></h3>
     ${l.length ? `<div class="tw" style="margin-top:10px;border:0"><table><thead><tr><th>Descrição</th><th>Dia</th><th>Forma</th><th class="r">Valor</th></tr></thead><tbody>
-    ${l.map(f => `<tr class="click" data-act="editFixo" data-id="${esc(f.id)}" style="${ativos.includes(f) ? '' : 'opacity:.5'}"><td>${esc(f.desc)}<span class="d2">${esc(catById(f.cat).nome)}${f.fim ? ` · até ${L.fmtYM(f.fim)}` : ''}${f.ini && f.ini > R ? ` · a partir de ${L.fmtYM(f.ini)}` : ''}</span></td><td class="ink2">${f.dia === 'util' ? 'último útil' : 'dia ' + f.dia}</td><td class="ink2">${f.t === 'r' ? '—' : f.pg === 'cc' ? 'Cartão' : 'Conta'}</td><td class="r num">${brl(f.v)}</td></tr>`).join('')}
+    ${l.map(f => `<tr class="click" data-act="editFixo" data-id="${esc(f.id)}" style="${ativos.includes(f) ? '' : 'opacity:.5'}"><td>${esc(f.desc)}<span class="d2">${esc(catById(f.cat).nome)}${f.chave ? ' · reconhecido na fatura' : ''}${f.fim ? ` · até ${L.fmtYM(f.fim)}` : ''}${f.ini && f.ini > R ? ` · a partir de ${L.fmtYM(f.ini)}` : ''}</span></td><td class="ink2">${f.dia === 'util' ? 'último útil' : 'dia ' + f.dia}</td><td class="ink2">${f.t === 'r' ? '—' : f.pg === 'cc' ? 'Cartão' : 'Conta'}</td><td class="r num">${brl(f.v)}</td></tr>`).join('')}
     </tbody></table></div>` : `<p class="mut">Nenhum cadastrado.</p>`}
     <button class="btn sm" style="margin-top:10px" data-act="novoFixo" data-t="${t}">Adicionar ${t === 'r' ? 'receita' : 'despesa'} fixa</button></section>`;
   };
-  return `<div class="grid g4" style="margin-bottom:14px">
+  return `${secRecorrentes()}<div class="grid g4" style="margin-bottom:14px">
     <div class="card tile"><span class="lbl">Receitas fixas</span><span class="mid num">${brl(rec)}</span></div>
     <div class="card tile"><span class="lbl">Despesas fixas</span><span class="mid num">${brl(desp)}</span></div>
     <div class="card tile"><span class="lbl">Fixos / renda</span><span class="mid num ${rec && desp / rec > 0.5 ? 'neg' : ''}">${pct(rec ? desp / rec : null)}</span><span class="sub">referência: até 50%</span></div>
@@ -527,7 +598,7 @@ function vMetas() {
 /* ---------- Ajustes ---------- */
 
 const PAINEL_BLOCOS = [['sobra', 'Sobra do mês'], ['ritmo', 'Pode gastar por dia (mês atual) ou resumo da fatura'], ['indicadores', 'Indicadores: receitas, fatura, conta, poupança'], ['atacar', 'Onde atacar'], ['categorias', 'Gastos por categoria'], ['tendencia', 'Receitas x despesas (6 meses)'], ['parcelas', 'Parcelas já comprometidas'], ['divisao', 'Divisão da renda 50/30/20']];
-const ALERTAS = [['poupanca', 'Taxa de poupança do mês'], ['estouro', 'Limite do ciclo estourado'], ['orcamento', 'Categoria acima do orçamento'], ['crescimento', 'Categoria que subiu contra a média'], ['juros', 'Juros, IOF e tarifas'], ['fixos', 'Fixos acima de 50% da renda'], ['parcelas', 'Parcelas na próxima fatura'], ['assinaturas', 'Custo anual das assinaturas'], ['formiga', 'Compras pequenas somadas'], ['reserva', 'Falta de reserva de emergência'], ['conferir', 'Lembrete de conferir a fatura fechada']];
+const ALERTAS = [['poupanca', 'Taxa de poupança do mês'], ['estouro', 'Limite do ciclo estourado'], ['orcamento', 'Categoria acima do orçamento'], ['crescimento', 'Categoria que subiu contra a média'], ['juros', 'Juros, IOF e tarifas'], ['fixos', 'Fixos acima de 50% da renda'], ['parcelas', 'Parcelas na próxima fatura'], ['assinaturas', 'Custo anual das assinaturas'], ['formiga', 'Compras pequenas somadas'], ['reserva', 'Falta de reserva de emergência'], ['conferir', 'Lembrete de conferir a fatura fechada'], ['recorrentes', 'Cobranças recorrentes não cadastradas']];
 function painelOrdem() {
   const ids = PAINEL_BLOCOS.map(b => b[0]);
   const o = (S.cfg.painel.ordem || []).filter(id => ids.includes(id));
@@ -555,7 +626,9 @@ function secImportadas() {
   for (const it of S.items) if (it.t === 'd' && it.pg === 'cc' && it.fat) { const r = g[it.fat] ||= { n: 0, v: 0 }; r.n++; r.v += it.v / (it.n || 1); }
   const ks = Object.keys(g).sort().reverse();
   if (!ks.length) return '';
+  const dupl = L.comprasDuplicadas(S.items, F());
   return `<section class="card sec" id="importadas"><h3>Faturas importadas <small>mover para outra fatura ou desfazer</small></h3>
+  ${dupl.length ? `<div class="hint row" style="margin-top:10px"><span>${dupl.map(l => esc(l[0].desc) + ' (' + l[0].n + 'x)').join(', ')} lançada mais de uma vez.</span><span class="sp"></span><button class="btn sm" data-act="corrigirDup">Corrigir</button></div>` : ''}
   <div class="tw" style="margin-top:10px"><table><thead><tr><th>Fatura</th><th class="r">Lançamentos</th><th class="r">Valor na fatura</th><th class="r">Ações</th></tr></thead><tbody>
   ${ks.map(s => `<tr><td>${L.fmtYMlong(s)}</td><td class="r num">${g[s].n}</td><td class="r num">${brl(g[s].v)}</td><td class="r"><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">
     <select class="i" id="mv-${s}" aria-label="Mover para" style="font-size:12.5px;padding:5px 6px;width:auto">${[-3, -2, -1, 1, 2].map(k => L.addMonths(s, k)).map(o => `<option value="${o}" ${o === L.addMonths(s, -1) ? 'selected' : ''}>${L.fmtYMlong(o)}</option>`).join('')}</select>
@@ -774,30 +847,35 @@ function modalImport() {
     <label class="f">Arquivo<input class="i" type="file" id="imp-file" accept=".csv,text/csv"></label></div>
     <div id="imp-prev"></div>`);
 }
-function previewImport(txt, nome) {
+function previewImport(txt, nome, fatEscolhida) {
   const rows = L.lerFatura(txt);
   if (!rows.length) { $('#imp-prev').innerHTML = '<p class="neg">Não reconheci lançamentos nesse arquivo. Confira se ele tem colunas de data, descrição e valor.</p>'; return; }
-  const exist = S.items.filter(i => i.t === 'd');
-  const linhas = rows.map((r, i) => {
-    const nd = L.norm(r.desc);
-    let dup = '';
-    if (r.n > 1 && r.k > 1 && exist.some(e => e.n === r.n && L.norm(e.desc) === nd && Math.abs(e.v / e.n - r.v) < 0.05)) dup = 'parcela já projetada';
-    else if (exist.some(e => e.d === r.d && L.norm(e.desc) === nd && Math.abs(e.v / (e.n || 1) - r.v) < 0.05)) dup = 'já lançado';
-    return { ...r, i, dup, cat: L.categorizar(r.desc, S.cfg.aprend) };
-  });
-  previewImport.rows = linhas;
-  const det = detectarFatura(rows, nome), sel = $('#imp-fat');
+  const det = fatEscolhida ? null : detectarFatura(rows, nome), sel = $('#imp-fat');
   if (det) {
     if (![...sel.options].some(o => o.value === det.s)) sel.insertAdjacentHTML('beforeend', `<option value="${det.s}">${L.fmtYMlong(det.s)}</option>`);
     sel.value = det.s;
   }
+  sel.onchange = () => previewImport(txt, nome, sel.value);
+  const fat = sel.value, exist = S.items.filter(i => i.t === 'd');
+  const linhas = rows.map((r, i) => {
+    const nd = L.norm(r.desc);
+    let dup = '', ext = null;
+    if (r.n > 1) { // mesma compra = mesma descrição, nº de parcelas, valor e fatura da 1ª parcela
+      const orig = L.addMonths(fat, -(r.k - 1));
+      const e = exist.find(e => e.n === r.n && L.norm(e.desc) === nd && Math.abs(e.v / e.n - r.v) < 1 && L.origemDe(e, F()) === orig);
+      if (e) { if ((e.p0 || 1) <= r.k) dup = 'parcela já projetada'; else ext = e; }
+    }
+    if (!dup && !ext && exist.some(e => e.d === r.d && L.norm(e.desc) === nd && Math.abs(e.v / (e.n || 1) - r.v) < 0.05)) dup = 'já lançado';
+    return { ...r, i, dup, ext, cat: ext ? ext.cat : L.categorizar(r.desc, S.cfg.aprend) };
+  });
+  previewImport.rows = linhas;
   const tot = sum(linhas.filter(l => !l.dup), l => l.v);
   $('#imp-prev').innerHTML = `${det ? `<p class="hint" style="margin:12px 0 0">Identifiquei a <b>fatura de ${L.fmtYMlong(det.s)}</b>, que vence ${L.fmtDia(L.janelaCiclo(det.s, F(), V()).vence)}, porque ${det.motivo}. Se não for essa, troque em "Fatura de destino".</p>` : ''}
   <div class="row" style="margin:12px 0 8px"><b>${linhas.length} linhas</b><span class="mut">${linhas.filter(l => l.dup).length} desmarcadas por duplicidade</span><span class="sp"></span><span class="num">${brl(tot)}</span></div>
   <div class="tw" style="max-height:46vh"><table><thead><tr><th></th><th>Data</th><th>Descrição</th><th>Categoria</th><th class="r">Valor</th></tr></thead><tbody>
-  ${linhas.map(l => `<tr><td><input type="checkbox" id="imp-c${l.i}" ${l.dup ? '' : 'checked'}></td><td class="num">${L.fmtDia(l.d)}</td><td class="desc">${esc(l.desc)} ${l.n > 1 ? `<span class="pill">${l.k}/${l.n}</span>${l.n > l.k && !l.dup ? `<span class="d2">+ ${l.n - l.k} parcelas nas próximas faturas</span>` : ''}` : ''} ${l.dup ? `<span class="pill warn">${l.dup}</span>` : ''}</td><td><select class="i" id="imp-s${l.i}" style="font-size:12.5px;padding:5px 6px">${optCats('d', l.cat)}</select></td><td class="r num ${l.v < 0 ? 'pos' : ''}">${brl(l.v)}</td></tr>`).join('')}
+  ${linhas.map(l => `<tr><td><input type="checkbox" id="imp-c${l.i}" ${l.dup ? '' : 'checked'}></td><td class="num">${L.fmtDia(l.d)}</td><td class="desc">${esc(l.desc)} ${l.n > 1 ? `<span class="pill">${l.k}/${l.n}</span>${l.ext ? `<span class="d2">completa a compra já lançada a partir da ${l.ext.p0}/${l.n}</span>` : l.n > l.k && !l.dup ? `<span class="d2">+ ${l.n - l.k} parcelas nas próximas faturas</span>` : ''}` : ''} ${l.dup ? `<span class="pill warn">${l.dup}</span>` : ''}</td><td><select class="i" id="imp-s${l.i}" style="font-size:12.5px;padding:5px 6px">${optCats('d', l.cat)}</select></td><td class="r num ${l.v < 0 ? 'pos' : ''}">${brl(l.v)}</td></tr>`).join('')}
   </tbody></table></div>
-  <p class="sub">Compra parcelada projeta as parcelas que faltam: "Parcela 2/12" lança esta e as 10 seguintes. Na próxima fatura a parcela 3/12 é reconhecida e não duplica. Valores negativos entram como estorno.</p>
+  <p class="sub">Compra parcelada projeta as parcelas que faltam: "Parcela 2/12" lança esta e as 10 seguintes. Na próxima fatura a parcela 3/12 é reconhecida e não duplica, e importar uma fatura anterior (1/12) completa a mesma compra. Valores negativos entram como estorno.</p>
   <div class="mfoot"><span class="sp"></span><button class="btn pri" data-act="confirmarImport">Importar selecionados</button></div>`;
 }
 async function confirmarImport() {
@@ -806,6 +884,7 @@ async function confirmarImport() {
     if (!$('#imp-c' + l.i).checked) continue;
     const cat = $('#imp-s' + l.i).value;
     if (cat !== l.cat) aprender(l.desc, cat);
+    if (l.ext) { novos.push({ ...l.ext, p0: l.k, fat, cat, v: Math.round(l.v * l.n * 100) / 100 }); continue; }
     novos.push(novoItem({ d: l.d, desc: l.desc, v: Math.round(l.v * l.n * 100) / 100, t: 'd', pg: 'cc', cat, n: l.n, p0: l.k, fat, imp: lote }));
   }
   if (!novos.length) return toast('Nada selecionado.');
@@ -826,10 +905,11 @@ function exportCSV() {
   baixar(`livro-caixa-lancamentos-${hoje()}.csv`, '\uFEFF' + linhas.map(l => l.map(csvCell).join(';')).join('\r\n'));
 }
 function exportFluxo() {
-  const { data } = linhasFluxo(S.ref);
-  const rows = [['linha', ...data.map(x => x.s + (x.fut ? '*' : ''))], ['receitas fixas', ...data.map(x => x.t.recFixa)], ['receitas variaveis', ...data.map(x => x.recVar)], ['despesas fixas', ...data.map(x => x.t.despFixa)], ['parcelas', ...data.map(x => x.t.despParc)], ['variaveis', ...data.map(x => x.despVar)], ['sobra', ...data.map(x => x.sobra)], ['sobra acumulada', ...data.map(x => x.acum)]];
-  for (const c of S.cfg.cats.filter(c => c.t === 'd')) rows.push([c.nome, ...data.map(x => x.t.porCat[c.id] || 0)]);
-  baixar(`livro-caixa-fluxo-${S.ref}.csv`, '\uFEFF' + rows.map(l => l.map(v => typeof v === 'number' ? csvCell(Math.round(v * 100) / 100) : csvCell(v)).join(';')).join('\r\n'));
+  const X = linhasFluxo(S.ref), r2 = v => v == null ? '' : Math.round(v * 100) / 100;
+  const rows = [['linha', ...X.cols.map(s => s + (s > X.atual ? ' (previsto)' : s === X.atual ? ' (em aberto)' : ''))]];
+  for (const g of X.grupos) { rows.push([`(${g.sinal === '+' ? '+' : '-'}) ${g.nome}`, ...g.tot.map(r2)]); for (const d of g.det) rows.push(['    ' + d.nome, ...d.v.map(r2)]); }
+  rows.push(['(=) Total de despesas', ...X.desp.map(r2)], ['(=) Sobra do mês', ...X.sobra.map(r2)], ['Taxa de poupança', ...X.taxa.map(v => v == null ? '' : Math.round(v * 1000) / 10 + '%')], ['Sobra acumulada', ...X.acum.map(r2)], ['Fatura do cartão', ...X.cc.map(r2)], ['Em conta', ...X.conta.map(r2)]);
+  baixar(`livro-caixa-fluxo-${S.ref}.csv`, '﻿' + rows.map(l => l.map(v => typeof v === 'number' ? csvCell(v) : csvCell(v)).join(';')).join('\r\n'));
 }
 function exportJSON() { baixar(`livro-caixa-backup-${hoje()}.json`, JSON.stringify(S.lastRaw || {}, null, 1)); }
 async function importJSON(txt) {
@@ -933,6 +1013,29 @@ document.addEventListener('click', async e => {
       const its = S.items.filter(i => i.t === 'd' && i.pg === 'cc' && i.fat === b.dataset.s);
       if (await act(excluirItens(its), `${its.length} lançamentos excluídos`)) render();
     }); break;
+    case 'irRecorrentes': irPara('fixos'); setTimeout(() => $('#recorrentes')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); break;
+    case 'recCadastrar': {
+      const sel = (secRecorrentes.sug || []).filter((x, i) => $('#rc-' + i)?.checked);
+      if (!sel.length) return toast('Nada marcado.');
+      const nomes = (secRecorrentes.sug || []).map(x => limpaDesc(x.desc));
+      S.cfg.fixos = [...S.cfg.fixos, ...sel.map(x => ({ id: uid(), desc: limpaDesc(x.desc) + (nomes.filter(n => n === limpaDesc(x.desc)).length > 1 ? ' ' + brl(x.v) : ''), v: x.v, t: 'd', cat: x.cat, pg: 'cc', dia: x.dia, ini: x.ini, fim: null, chave: x.chave }))];
+      if (await act(salvarCfg(), `${sel.length} fixos cadastrados`)) render();
+      break;
+    }
+    case 'recIgnorar': { const x = (secRecorrentes.sug || [])[+b.dataset.i]; if (!x) break; S.cfg.recIgnorar = [...S.cfg.recIgnorar, x.id].slice(-200); if (await act(salvarCfg(), `${x.desc} ignorado`)) render(); break; }
+    case 'recEncerrar': { const id = b.dataset.id, fim = L.addMonths(b.dataset.s, -1); S.cfg.fixos = S.cfg.fixos.map(f => f.id === id ? { ...f, fim } : f); if (await act(salvarCfg(), `Encerrado em ${L.fmtYM(fim)}`)) render(); break; }
+    case 'corrigirDup': confirmar(b, 'Confirmar correção', async () => {
+      const del = L.comprasDuplicadas(S.items, F()).flatMap(l => l.slice(1));
+      if (await act(excluirItens(del), `${del.length} lançamento${del.length > 1 ? 's' : ''} duplicado${del.length > 1 ? 's' : ''} removido${del.length > 1 ? 's' : ''}`)) render();
+    }); break;
+    case 'fxToggle': {
+      const g = b.dataset.g, ab = fluxoAbertos(), on = !ab.has(g);
+      on ? ab.add(g) : ab.delete(g); salvarAbertos(ab);
+      b.setAttribute('aria-expanded', on);
+      document.querySelectorAll(`tr[data-of="${g}"]`).forEach(r => r.hidden = !on);
+      break;
+    }
+    case 'fxTodos': salvarAbertos(new Set(b.dataset.v === '1' ? FLUXO_GRUPOS : [])); render(); break;
     case 'novo': if (precisa()) modalLanc(); break;
     case 'filtro': S.filtro = b.dataset.f; render(); break;
     case 'verCat': S.filtro = 'cat:' + b.dataset.cat; irPara('extrato'); break;
@@ -953,7 +1056,7 @@ document.addEventListener('click', async e => {
       const { f, t } = modalFixo.ctx, v = valNum($('#f-v').value), desc = $('#f-desc').value.trim();
       if (!desc || !isFinite(v)) return toast('Preencha descrição e valor.');
       const dia = $('#f-dia').value;
-      const nf = { id: f?.id || uid(), desc, v, t, cat: $('#f-cat').value, pg: t === 'r' ? 'conta' : $('#f-pg').value, dia: dia === 'util' ? 'util' : +dia, ini: $('#f-ini').value || null, fim: $('#f-fim').value || null };
+      const nf = { id: f?.id || uid(), desc, v, t, cat: $('#f-cat').value, pg: t === 'r' ? 'conta' : $('#f-pg').value, dia: dia === 'util' ? 'util' : +dia, ini: $('#f-ini').value || null, fim: $('#f-fim').value || null, ...(f && f.chave ? { chave: f.chave } : {}) };
       let msg = 'Fixo salvo';
       if (!f) S.cfg.fixos = [...S.cfg.fixos, nf];
       else {

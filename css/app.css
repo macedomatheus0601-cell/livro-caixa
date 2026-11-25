@@ -154,6 +154,31 @@ td .d2{display:block;font-size:11.5px;color:var(--ink-3)}
 .flux .proj{font-style:italic;color:var(--ink-2)}
 .flux th.cur{color:var(--accent)} .flux th.fut{color:var(--ink-3)}
 .flux tr.grp td{font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-weight:600;background:var(--surface)}
+/* demonstrativo */
+.dre th,.dre td{padding:8px 12px}
+.dre thead tr.band th{background:var(--surface);border-bottom:0;padding:8px 6px 0;font-size:10.5px;text-align:center;position:static}
+.dre thead tr.band th:first-child{position:sticky;left:0;z-index:2}
+.dre thead tr.band th span{display:block;border-top:2px solid var(--line);padding-top:4px}
+.dre thead tr.band th.aberto span{border-color:var(--accent);color:var(--accent)}
+.dre thead tr.band th.prev span{border-top-style:dashed}
+.dre th.prev,.dre td.prev{background:var(--surface-2)}
+.dre th.cur{color:var(--accent)}
+.dre td.est{font-style:italic;color:var(--ink-2)}
+.dre tr.g td{font-weight:700}
+.dre .fxg{display:flex;align-items:center;gap:6px;width:100%;padding:0;border:0;background:none;cursor:pointer;font-weight:700;text-align:left}
+.dre .fxg[disabled]{cursor:default}
+.dre .fxg[disabled] .chev{visibility:hidden}
+.dre .chev{flex:none;color:var(--ink-3);transition:transform .15s}
+.dre .fxg[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.dre .sg{display:inline-block;width:26px;flex:none;font-family:var(--f-num);font-weight:500;color:var(--ink-3)}
+.dre tr.d td{font-size:12.5px;color:var(--ink-2);padding-top:6px;padding-bottom:6px;border-bottom-style:dashed}
+.dre tr.d td:first-child{padding-left:56px;max-width:250px;overflow:hidden;text-overflow:ellipsis}
+.dre tr.sub td{font-weight:600;border-top:1px solid var(--ink-3)}
+.dre tr.sub td:first-child,.dre tr.res td:first-child,.dre tr.ind td:first-child{padding-left:30px}
+.dre tr.sub .sg,.dre tr.res .sg{margin-left:-26px}
+.dre tr.res td{font-weight:800;font-size:14px;border-top:1px solid var(--ink);border-bottom:3px double var(--ink)}
+.dre tr.ind td{font-size:12.5px;color:var(--ink-2)}
+.dre tr.memo td{border-top:8px solid var(--bg)}
 
 /* lista mobile */
 .list{display:none}
@@ -208,6 +233,9 @@ td .d2{display:block;font-size:11.5px;color:var(--ink-3)}
   .kv{grid-template-columns:repeat(2,minmax(0,1fr))}
   .tx-table{display:none} .list{display:grid}
   .fgrid{grid-template-columns:minmax(0,1fr)}
+  .flux th:first-child,.flux td:first-child{min-width:138px}
+  .dre tr.d td:first-child{padding-left:36px;max-width:160px}
+  .dre th,.dre td{padding-left:9px;padding-right:9px}
   .onb .ln{grid-template-columns:minmax(0,1fr) 110px}
   .onb .ln .pgsel{grid-column:1/-1}
   .cat{grid-template-columns:minmax(0,1fr) auto}

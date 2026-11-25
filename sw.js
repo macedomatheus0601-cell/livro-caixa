@@ -4,7 +4,7 @@
    - Firebase e fontes (endereços com versão fixa): cache primeiro.
    - Chamadas de dados do Firestore/login: nunca passam por aqui
      (o próprio Firebase guarda os dados offline no aparelho). */
-const VERSAO = 'v7';
+const VERSAO = 'v8';
 const CASCA = `casca-${VERSAO}`, LIBS = `libs-${VERSAO}`;
 const ARQUIVOS = ['./', './index.html', './css/app.css', './js/config.js', './js/logic.js', './js/app.js', './js/firebase.js', './manifest.webmanifest', './icones/icone-192.png', './icones/icone-512.png', './icones/icone-180.png', './icones/favicon-32.png'];
 

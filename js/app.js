@@ -21,12 +21,13 @@ const CATS_PADRAO = [
   ['salario', 'Salário', 'r', ''], ['extra', 'Renda extra', 'r', ''], ['rendimentos', 'Rendimentos', 'r', ''], ['reembolso', 'Reembolsos', 'r', ''], ['outras_r', 'Outras receitas', 'r', ''],
 ].map(([id, nome, t, grupo]) => ({ id, nome, t, grupo, orc: 0 }));
 const GRUPOS = { essencial: 'Essencial', estilo: 'Estilo de vida', poupanca: 'Poupança' };
-const cfgPadrao = () => ({ v: 1, cartao: { nome: 'Cartão de crédito', fecha: 29, vence: 5 }, metaTaxa: 0.2, cats: clone(CATS_PADRAO), fixos: [], metas: [], aprend: {} });
+const cfgPadrao = () => ({ v: 1, cartao: { nome: 'Cartão de crédito', fecha: 29, vence: 5 }, metaTaxa: 0.2, cats: clone(CATS_PADRAO), fixos: [], metas: [], aprend: {}, painel: { ordem: [], ocultos: [], alertasOff: [] } });
 function mergeCfg(c) {
   const d = cfgPadrao(), x = clone(c || {});
   const out = { ...d, ...x, cartao: { ...d.cartao, ...(x.cartao || {}) } };
   for (const k of ['cats', 'fixos', 'metas']) if (!Array.isArray(out[k])) out[k] = d[k];
   out.aprend = out.aprend || {};
+  out.painel = { ordem: [], ocultos: [], alertasOff: [], ...(x.painel || {}) };
   return out;
 }
 
@@ -133,46 +134,47 @@ function insights(R) {
   // taxa de poupança
   if (renda > 0 && R <= atual) {
     const tx = corrente ? p.taxaProj : t.taxa;
-    if (tx < 0) out.push({ n: 'critico', tit: corrente ? 'O mês vai fechar no vermelho' : 'Você gastou mais do que ganhou', txt: `${pre}as despesas passam a renda em ${brl0(-tx * renda)}.`, g: -tx * renda + meta * renda });
-    else if (tx < meta) out.push({ n: tx < 0.1 ? 'critico' : 'atencao', tit: `Poupança de ${pct(tx)}, meta ${pct(meta)}`, txt: `${pre}faltam ${brl0((meta - tx) * renda)} para bater a meta do mês.`, g: (meta - tx) * renda });
-    else out.push({ n: 'bom', tit: `Poupança de ${pct(tx)} no mês`, txt: `Acima da meta de ${pct(meta)}. Direcione a sobra para uma meta antes que vire gasto.` });
+    if (tx < 0) out.push({ k: 'poupanca', n: 'critico', tit: corrente ? 'O mês vai fechar no vermelho' : 'Você gastou mais do que ganhou', txt: `${pre}as despesas passam a renda em ${brl0(-tx * renda)}.`, g: -tx * renda + meta * renda });
+    else if (tx < meta) out.push({ k: 'poupanca', n: tx < 0.1 ? 'critico' : 'atencao', tit: `Poupança de ${pct(tx)}, meta ${pct(meta)}`, txt: `${pre}faltam ${brl0((meta - tx) * renda)} para bater a meta do mês.`, g: (meta - tx) * renda });
+    else out.push({ k: 'poupanca', n: 'bom', tit: `Poupança de ${pct(tx)} no mês`, txt: `Acima da meta de ${pct(meta)}. Direcione a sobra para uma meta antes que vire gasto.` });
   }
-  if (corrente && p.porDia < 0) out.push({ n: 'critico', tit: 'Orçamento variável do ciclo estourado', txt: `Você já passou ${brl0(-p.disponivel)} do que dava para gastar mantendo ${pct(meta)} de poupança. Segure o cartão até o fechamento em ${L.fmtDia(p.jan.fecha)}.`, g: -p.disponivel });
+  if (corrente && p.porDia < 0) out.push({ k: 'estouro', n: 'critico', tit: 'Orçamento variável do ciclo estourado', txt: `Você já passou ${brl0(-p.disponivel)} do que dava para gastar mantendo ${pct(meta)} de poupança. Segure o cartão até o fechamento em ${L.fmtDia(p.jan.fecha)}.`, g: -p.disponivel });
 
   // categorias: orçamento e crescimento
   for (const c of S.cfg.cats.filter(c => c.t === 'd' && c.grupo !== 'poupanca')) {
     const v = fator(c.id), avg = media(x => x.t.porCat[c.id] || 0);
-    if (c.orc > 0 && v > c.orc * 1.05) out.push({ n: v > c.orc * 1.25 ? 'critico' : 'atencao', tit: `${c.nome} acima do orçamento`, txt: `${pre}${brl0(v)} contra ${brl0(c.orc)} planejados (${pct(v / c.orc - 1)} a mais).`, g: v - c.orc, cat: c.id });
-    else if (avg != null && ant.length >= 2 && avg > 0 && v > avg * 1.25 && v - avg > 80) out.push({ n: 'atencao', tit: `${c.nome} subiu ${pct(v / avg - 1)}`, txt: `${pre}${brl0(v)} no mês contra média de ${brl0(avg)} nos ${ant.length} meses anteriores.`, g: v - avg, cat: c.id });
+    if (c.orc > 0 && v > c.orc * 1.05) out.push({ k: 'orcamento', n: v > c.orc * 1.25 ? 'critico' : 'atencao', tit: `${c.nome} acima do orçamento`, txt: `${pre}${brl0(v)} contra ${brl0(c.orc)} planejados (${pct(v / c.orc - 1)} a mais).`, g: v - c.orc, cat: c.id });
+    else if (avg != null && ant.length >= 2 && avg > 0 && v > avg * 1.25 && v - avg > 80) out.push({ k: 'crescimento', n: 'atencao', tit: `${c.nome} subiu ${pct(v / avg - 1)}`, txt: `${pre}${brl0(v)} no mês contra média de ${brl0(avg)} nos ${ant.length} meses anteriores.`, g: v - avg, cat: c.id });
   }
   // juros
-  if ((t.porCat.taxas || 0) > 0) out.push({ n: 'critico', tit: `${brl(t.porCat.taxas)} em juros, IOF e tarifas`, txt: 'Dinheiro que não compra nada. Negocie anuidade, evite rotativo e parcelamento da fatura.', g: t.porCat.taxas, cat: 'taxas' });
+  if ((t.porCat.taxas || 0) > 0) out.push({ k: 'juros', n: 'critico', tit: `${brl(t.porCat.taxas)} em juros, IOF e tarifas`, txt: 'Dinheiro que não compra nada. Negocie anuidade, evite rotativo e parcelamento da fatura.', g: t.porCat.taxas, cat: 'taxas' });
   // custo fixo
   if (renda > 0) {
     const fixo = sum(m.entradas.filter(e => e.t === 'd' && !isPoup(e.cat) && (e.tipo === 'fixo' || catById(e.cat).grupo === 'essencial')), e => e.v);
     const r = fixo / renda;
-    if (r > 0.5) out.push({ n: r > 0.65 ? 'critico' : 'atencao', tit: `Fixos e essenciais levam ${pct(r)} da renda`, txt: `A referência é até 50%. É aqui que estão as economias grandes e duradouras: aluguel, planos, seguros, contas.`, g: fixo - renda * 0.5 });
+    if (r > 0.5) out.push({ k: 'fixos', n: r > 0.65 ? 'critico' : 'atencao', tit: `Fixos e essenciais levam ${pct(r)} da renda`, txt: `A referência é até 50%. É aqui que estão as economias grandes e duradouras: aluguel, planos, seguros, contas.`, g: fixo - renda * 0.5 });
   }
   // parcelas futuras
   const fut = [1, 2, 3, 4, 5, 6].map(k => sum((S.idx[L.addMonths(R, k)] || []).filter(e => e.tipo === 'parcela' && e.t === 'd'), e => e.v));
   if (fut[0] > 0 && renda > 0) {
     const r = fut[0] / renda;
-    out.push({ n: r > 0.15 ? 'atencao' : 'info', tit: `${brl0(fut[0])} de parcelas já na próxima fatura`, txt: `${pct(r)} da renda já comprometida antes de você gastar. ${brl0(sum(fut))} nos próximos 6 meses.${r > 0.15 ? ' Evite novos parcelamentos até isso cair abaixo de 15%.' : ''}` });
+    out.push({ k: 'parcelas', n: r > 0.15 ? 'atencao' : 'info', tit: `${brl0(fut[0])} de parcelas já na próxima fatura`, txt: `${pct(r)} da renda já comprometida antes de você gastar. ${brl0(sum(fut))} nos próximos 6 meses.${r > 0.15 ? ' Evite novos parcelamentos até isso cair abaixo de 15%.' : ''}` });
   }
   // assinaturas
   const ass = t.porCat.assinaturas || 0;
-  if (ass > 0) out.push({ n: 'info', tit: `Assinaturas: ${brl0(ass * 12)} por ano`, txt: `${brl(ass)} por mês. Cancele o que não usou nos últimos 30 dias; dá para assinar de novo quando quiser.`, cat: 'assinaturas' });
+  if (ass > 0) out.push({ k: 'assinaturas', n: 'info', tit: `Assinaturas: ${brl0(ass * 12)} por ano`, txt: `${brl(ass)} por mês. Cancele o que não usou nos últimos 30 dias; dá para assinar de novo quando quiser.`, cat: 'assinaturas' });
   // gastos formiga
   const peq = m.entradas.filter(e => e.t === 'd' && e.tipo === 'variavel' && e.v > 0 && e.v <= 50 && !isPoup(e.cat));
-  if (peq.length >= 10) out.push({ n: renda && sum(peq, e => e.v) > renda * 0.05 ? 'atencao' : 'info', tit: `${peq.length} compras pequenas somam ${brl0(sum(peq, e => e.v))}`, txt: 'Gastos de até R$ 50 passam despercebidos na fatura. Delivery, café e app de corrida costumam ser os maiores.' });
+  if (peq.length >= 10) out.push({ k: 'formiga', n: renda && sum(peq, e => e.v) > renda * 0.05 ? 'atencao' : 'info', tit: `${peq.length} compras pequenas somam ${brl0(sum(peq, e => e.v))}`, txt: 'Gastos de até R$ 50 passam despercebidos na fatura. Delivery, café e app de corrida costumam ser os maiores.' });
   // reserva
   if (!S.cfg.metas.some(g => /reserva|emerg/i.test(g.nome))) {
     const ess = media(x => sum(x.entradas.filter(e => e.t === 'd' && !isPoup(e.cat) && (e.tipo === 'fixo' || catById(e.cat).grupo === 'essencial')), e => e.v)) ?? 0;
     const alvo = Math.ceil((ess || t.despFixa) * 6 / 500) * 500;
-    if (alvo > 0) out.push({ n: 'atencao', tit: 'Sem reserva de emergência', txt: `Primeira meta recomendada: 6 meses do custo essencial, cerca de ${brl0(alvo)}. Deixe em liquidez diária (Tesouro Selic ou CDB 100% CDI).`, acao: 'reserva', alvo });
+    if (alvo > 0) out.push({ k: 'reserva', n: 'atencao', tit: 'Sem reserva de emergência', txt: `Primeira meta recomendada: 6 meses do custo essencial, cerca de ${brl0(alvo)}. Deixe em liquidez diária (Tesouro Selic ou CDB 100% CDI).`, acao: 'reserva', alvo });
   }
   const ord = { critico: 0, atencao: 1, info: 2, bom: 3 };
-  return out.sort((a, b) => ord[a.n] - ord[b.n] || (b.g || 0) - (a.g || 0));
+  const off = S.cfg.painel.alertasOff;
+  return out.filter(i => !off.includes(i.k)).sort((a, b) => ord[a.n] - ord[b.n] || (b.g || 0) - (a.g || 0));
 }
 
 /* ===================== render ===================== */
@@ -253,8 +255,9 @@ function vPainel(R) {
   g.poupanca += Math.max(0, t.sobra);
   const gt = Math.max(1, t.rec || g.essencial + g.estilo + g.poupanca);
 
-  let h = `<div class="grid g-hero">
-  <section class="card">
+  const ins = () => insights(R);
+  const B = {
+    sobra: () => `<section class="card">
     <span class="lbl">${corrente ? 'Sobra até agora' : R > atual ? 'Sobra prevista' : 'Sobra do mês'}</span>
     <div class="big num ${t.sobra < 0 ? 'neg' : ''}">${brl(t.sobra)}</div>
     <div class="sub">Receitas ${brl(t.rec)} menos despesas ${brl(t.desp)}${t.poupanca ? ` (inclui ${brl0(t.poupanca)} aplicados)` : ''}</div>
@@ -264,37 +267,35 @@ function vPainel(R) {
       <span style="width:${sobraPos / base * 100}%;background:var(--good)"></span>
     </div>
     <div class="legend"><span><i style="background:var(--accent)"></i>Fatura ${brl0(t.fatura)}</span><span><i style="background:var(--bar-2)"></i>Em conta ${brl0(t.conta)}</span><span><i style="background:var(--good)"></i>Sobra ${brl0(sobraPos)}</span></div>
-    <div class="divider"></div>
-    <span class="lbl">Divisão da renda · referência 50/30/20</span>
+  </section>`,
+    divisao: () => `<section class="card"><span class="lbl">Divisão da renda · referência 50/30/20</span>
     <div class="kv kv3">
       <div><div class="num" style="font-weight:600">${pct(g.essencial / gt)}</div><div class="sub">Essencial <span class="mut">até 50%</span></div></div>
       <div><div class="num" style="font-weight:600">${pct(g.estilo / gt)}</div><div class="sub">Estilo de vida <span class="mut">até 30%</span></div></div>
       <div><div class="num ${g.poupanca / gt >= S.cfg.metaTaxa ? 'pos' : ''}" style="font-weight:600">${pct(g.poupanca / gt)}</div><div class="sub">Poupança <span class="mut">${pct(S.cfg.metaTaxa)}+</span></div></div>
-    </div>
-  </section>
-  ${corrente ? cardRitmo(R) : cardResumoFatura(R, jan)}
-  </div>
-  <div class="grid g4" style="margin-top:14px">
+    </div></section>`,
+    ritmo: () => corrente ? cardRitmo(R) : cardResumoFatura(R, jan),
+    indicadores: () => `<div class="grid g4 span2">
     ${tile('Receitas', brl(t.rec), `${brl0(t.recFixa)} fixas · ${brl0(t.recVar)} variáveis`)}
     ${tile('Fatura do cartão', brl(t.fatura), `vence ${L.fmtDia(jan.vence)} · ${brl0(sum(m.entradas.filter(e => e.pg === 'cc' && e.tipo === 'parcela' && e.t === 'd'), e => e.v))} em parcelas`)}
     ${tile('Despesas em conta', brl(t.conta), 'Pix, débito e boletos')}
     ${tile('Taxa de poupança', pct(t.taxa), `meta ${pct(S.cfg.metaTaxa)}`, t.taxa != null && t.taxa >= S.cfg.metaTaxa ? 'pos' : t.taxa != null && t.taxa < 0 ? 'neg' : '')}
-  </div>`;
-
-  const ins = insights(R);
-  const mostra = S.todosInsights ? ins : ins.slice(0, 5);
-  h += `<div class="grid g2 sec">
-  <section class="card"><h3>Onde atacar <small>${ins.length} pontos</small></h3>
-    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Lance alguns gastos para eu apontar onde economizar.</p>'}</div>
-    ${ins.length > 5 ? `<button class="btn sm" style="margin-top:10px" data-act="todosIns">${S.todosInsights ? 'Mostrar menos' : `Ver todos (${ins.length})`}</button>` : ''}
-  </section>
-  <section class="card"><h3>Gastos por categoria</h3><div class="legend"><span><i style="background:var(--accent)"></i>mês</span><span><i style="background:var(--ink);width:2px"></i>orçamento</span><span><i style="border:2px solid var(--ink-3);border-radius:50%;background:transparent"></i>média 3 meses</span></div>${blocoCategorias(R)}</section>
-  </div>
-  <div class="grid g2 sec">
-    <section class="card"><h3>Receitas x despesas <small>6 meses</small></h3>${graficoTendencia(R)}</section>
-    <section class="card"><h3>Parcelas já comprometidas <small>próximas faturas</small></h3>${blocoParcelas(R)}</section>
-  </div>
-`;
+  </div>`,
+    atacar: () => {
+      const l = ins(), mostra = S.todosInsights ? l : l.slice(0, 5);
+      return `<section class="card"><h3>Onde atacar <small>${l.length} pontos</small></h3>
+    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
+    ${l.length > 5 ? `<button class="btn sm" style="margin-top:10px" data-act="todosIns">${S.todosInsights ? 'Mostrar menos' : `Ver todos (${l.length})`}</button>` : ''}
+  </section>`;
+    },
+    categorias: () => `<section class="card"><h3>Gastos por categoria</h3><div class="legend"><span><i style="background:var(--accent)"></i>mês</span><span><i style="background:var(--ink);width:2px"></i>orçamento</span><span><i style="border:2px solid var(--ink-3);border-radius:50%;background:transparent"></i>média 3 meses</span></div>${blocoCategorias(R)}</section>`,
+    tendencia: () => `<section class="card"><h3>Receitas x despesas <small>6 meses</small></h3>${graficoTendencia(R)}</section>`,
+    parcelas: () => `<section class="card"><h3>Parcelas já comprometidas <small>próximas faturas</small></h3>${blocoParcelas(R)}</section>`,
+  };
+  const vis = painelOrdem().filter(id => !S.cfg.painel.ocultos.includes(id));
+  const link = `<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" data-act="irPersonalizar">Personalizar painel</button></div>`;
+  if (!vis.length) return `<div class="card empty"><h2>Painel vazio</h2><p>Todos os blocos estão ocultos.</p>${link}</div>`;
+  const h = `<div class="dash">${vis.map(id => B[id]()).join('')}</div>${link}`;
   return h;
 }
 
@@ -486,6 +487,31 @@ function vMetas() {
 }
 
 /* ---------- Ajustes ---------- */
+
+const PAINEL_BLOCOS = [['sobra', 'Sobra do mês'], ['ritmo', 'Pode gastar por dia (mês atual) ou resumo da fatura'], ['indicadores', 'Indicadores: receitas, fatura, conta, poupança'], ['atacar', 'Onde atacar'], ['categorias', 'Gastos por categoria'], ['tendencia', 'Receitas x despesas (6 meses)'], ['parcelas', 'Parcelas já comprometidas'], ['divisao', 'Divisão da renda 50/30/20']];
+const ALERTAS = [['poupanca', 'Taxa de poupança do mês'], ['estouro', 'Limite do ciclo estourado'], ['orcamento', 'Categoria acima do orçamento'], ['crescimento', 'Categoria que subiu contra a média'], ['juros', 'Juros, IOF e tarifas'], ['fixos', 'Fixos acima de 50% da renda'], ['parcelas', 'Parcelas na próxima fatura'], ['assinaturas', 'Custo anual das assinaturas'], ['formiga', 'Compras pequenas somadas'], ['reserva', 'Falta de reserva de emergência']];
+function painelOrdem() {
+  const ids = PAINEL_BLOCOS.map(b => b[0]);
+  const o = (S.cfg.painel.ordem || []).filter(id => ids.includes(id));
+  return [...o, ...ids.filter(id => !o.includes(id))];
+}
+function secPersonalizar() {
+  const ordem = painelOrdem(), oc = S.cfg.painel.ocultos, off = S.cfg.painel.alertasOff;
+  const nome = Object.fromEntries(PAINEL_BLOCOS);
+  return `<section class="card sec" id="personalizar"><h3>Personalizar painel <small>vale no celular e no computador</small></h3>
+  <div class="grid g2" style="margin-top:12px">
+    <div><div class="lbl">Blocos e ordem</div><div class="plist">
+    ${ordem.map((id, i) => `<div class="prow ${oc.includes(id) ? 'off' : ''}"><label><input type="checkbox" id="pb-${id}" data-act="pbToggle" data-id="${id}" ${oc.includes(id) ? '' : 'checked'}><span>${nome[id]}</span></label><span class="sp"></span>
+      <button class="ibtn" data-act="pbMove" data-id="${id}" data-k="-1" ${i === 0 ? 'disabled' : ''} aria-label="Subir ${nome[id]}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="m3 10 5-5 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="ibtn" data-act="pbMove" data-id="${id}" data-k="1" ${i === ordem.length - 1 ? 'disabled' : ''} aria-label="Descer ${nome[id]}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="m3 6 5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`).join('')}
+    </div></div>
+    <div><div class="lbl">Alertas do "Onde atacar"</div><div class="plist">
+    ${ALERTAS.map(([k, n]) => `<div class="prow ${off.includes(k) ? 'off' : ''}"><label><input type="checkbox" id="al-${k}" data-act="alToggle" data-k="${k}" ${off.includes(k) ? '' : 'checked'}><span>${n}</span></label></div>`).join('')}
+    </div></div>
+  </div>
+  <div class="row" style="margin-top:12px"><button class="btn sm" data-act="pbReset">Restaurar padrão</button></div>
+  </section>`;
+}
 function vAjustes() {
   const c = S.cfg;
   return `<div class="grid g2">
@@ -508,6 +534,7 @@ function vAjustes() {
     <button class="btn" data-act="demo">Ver com dados de exemplo</button>
   </section>
   </div>
+  ${secPersonalizar()}
   <section class="card sec"><h3>Categorias e orçamento mensal <small>orçamento 0 = sem limite</small></h3>
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="sugerirOrc">Sugerir orçamentos pela média</button><span class="sub">Essenciais pela média dos 3 últimos meses; estilo de vida com 10% de corte.</span></div>
     <div class="tw" style="margin-top:12px"><table><thead><tr><th>Categoria</th><th>Grupo</th><th class="r">Orçamento/mês</th></tr></thead><tbody>
@@ -774,6 +801,11 @@ document.addEventListener('click', async e => {
     case 'hoje': S.ref = cicloAtual(); render(); break;
     case 'irMes': S.ref = b.dataset.s; irPara('painel'); break;
     case 'fechar': fecharModal(); break;
+    case 'irPersonalizar': irPara('ajustes'); setTimeout(() => $('#personalizar')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); break;
+    case 'pbToggle': { const id = b.dataset.id, oc = S.cfg.painel.ocultos; S.cfg.painel.ocultos = b.checked ? oc.filter(x => x !== id) : [...new Set([...oc, id])]; act(salvarCfg()); render(); break; }
+    case 'alToggle': { const k = b.dataset.k, off = S.cfg.painel.alertasOff; S.cfg.painel.alertasOff = b.checked ? off.filter(x => x !== k) : [...new Set([...off, k])]; act(salvarCfg()); render(); break; }
+    case 'pbMove': { const o = painelOrdem(), i = o.indexOf(b.dataset.id), j = i + +b.dataset.k; if (j < 0 || j >= o.length) break; [o[i], o[j]] = [o[j], o[i]]; S.cfg.painel.ordem = o; act(salvarCfg()); render(); const nb = document.querySelector(`[data-act="pbMove"][data-id="${b.dataset.id}"][data-k="${b.dataset.k}"]`); (nb && !nb.disabled ? nb : document.querySelector(`#pb-${b.dataset.id}`))?.focus({ preventScroll: true }); break; }
+    case 'pbReset': S.cfg.painel = { ordem: [], ocultos: [], alertasOff: [] }; act(salvarCfg(), 'Painel restaurado'); render(); break;
     case 'novo': if (precisa()) modalLanc(); break;
     case 'filtro': S.filtro = b.dataset.f; render(); break;
     case 'verCat': S.filtro = 'cat:' + b.dataset.cat; irPara('extrato'); break;

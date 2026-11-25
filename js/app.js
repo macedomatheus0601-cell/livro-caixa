@@ -544,6 +544,13 @@ function fixoDeRec(x, todas) {
 function autoRecorrentes() {
   if (S.autoRecBusy || !S.store || !S.loaded || !S.temCfg) return;
   if (!['ok', 'pendente', 'local', 'demo'].includes(S.status) && !S.demo) return;
+  // compra parcelada que entrou duas vezes por faturas diferentes: mantém a que começa antes
+  const dup = L.comprasDuplicadas(S.items, F()).filter(l => new Set(l.map(i => i.fat || i.d)).size === l.length);
+  if (dup.length) {
+    S.autoRecBusy = true;
+    act(excluirItens(dup.flatMap(l => l.slice(1))), `Compra parcelada duplicada corrigida: ${dup.map(l => l[0].desc).join(', ')}`).finally(() => { S.autoRecBusy = false; });
+    return;
+  }
   const sug = L.recorrentes(S.items, F(), S.cfg.fixos, S.cfg.recIgnorar);
   if (!sug.length) return;
   S.autoRecBusy = true;

@@ -4,7 +4,7 @@
    - Firebase e fontes (endereços com versão fixa): cache primeiro.
    - Chamadas de dados do Firestore/login: nunca passam por aqui
      (o próprio Firebase guarda os dados offline no aparelho). */
-const VERSAO = 'v3';
+const VERSAO = 'v4';
 const CASCA = `casca-${VERSAO}`, LIBS = `libs-${VERSAO}`;
 const ARQUIVOS = ['./', './index.html', './css/app.css', './js/config.js', './js/logic.js', './js/app.js', './js/firebase.js', './manifest.webmanifest', './icones/icone-192.png', './icones/icone-512.png'];
 
@@ -24,6 +24,7 @@ self.addEventListener('fetch', ev => {
     return;
   }
   if (url.origin !== location.origin) return;
-  ev.respondWith(fetch(req).then(r => { if (r.ok) caches.open(CASCA).then(c => c.put(req, r.clone())); return r; })
+  // no-cache: sempre confere com o servidor (o GitHub Pages manda cache de 10 min)
+  ev.respondWith(fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(r => { if (r.ok) caches.open(CASCA).then(c => c.put(req, r.clone())); return r; })
     .catch(async () => (await caches.match(req, { ignoreSearch: true })) || (req.mode === 'navigate' ? caches.match('./index.html') : Response.error())));
 });

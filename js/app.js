@@ -98,8 +98,13 @@ async function salvarItens(items) {
   for (const [s, its] of Object.entries(pb)) await S.store.mergeMes(s, { items: its });
 }
 const excluirItem = it => S.store.mergeMes(S.bucket[it.id], { items: { [it.id]: null } });
+async function excluirItens(list) {
+  const pb = {};
+  for (const it of list) (pb[S.bucket[it.id]] ||= {})[it.id] = null;
+  for (const [b, its] of Object.entries(pb)) await S.store.mergeMes(b, { items: its });
+}
 const setOvr = (s, fid, o) => S.store.mergeMes(s, { ovr: { [fid]: o } });
-function novoItem(o) { return { id: o.id || uid(), d: o.d, desc: o.desc || '', v: +o.v || 0, t: o.t || 'd', cat: o.cat || 'outros', pg: o.t === 'r' ? 'conta' : (o.pg || 'cc'), n: Math.max(1, +o.n || 1), p0: Math.max(1, +o.p0 || 1), fat: o.fat || null, nota: o.nota || '' }; }
+function novoItem(o) { return { id: o.id || uid(), d: o.d, desc: o.desc || '', v: +o.v || 0, t: o.t || 'd', cat: o.cat || 'outros', pg: o.t === 'r' ? 'conta' : (o.pg || 'cc'), n: Math.max(1, +o.n || 1), p0: Math.max(1, +o.p0 || 1), fat: o.fat || null, nota: o.nota || '', imp: o.imp || null }; }
 
 /* ===================== análise ===================== */
 function projecao(R) {
@@ -385,6 +390,18 @@ function graficoTendencia(R) {
   return `<div class="legend" style="margin-top:6px"><span><i style="background:var(--bar-2)"></i>Receitas</span><span><i style="background:var(--accent)"></i>Despesas</span><span class="mut">linha de baixo: sobra</span></div>${svg}`;
 }
 
+function listaParcelados(R) {
+  const l = S.items.filter(i => i.t === 'd' && i.n > 1).map(i => {
+    const ps = L.parcelasDe(i, F()), fut = ps.filter(p => p.ref > R);
+    return fut.length ? { i, prox: fut[0], fim: ps[ps.length - 1].ref, rest: fut.length } : null;
+  }).filter(Boolean).sort((a, b) => b.prox.v * b.rest - a.prox.v * a.rest);
+  if (!l.length) return '';
+  return `<div class="divider"></div><div class="lbl">De onde vêm</div>
+  <div style="display:grid;gap:8px;margin-top:8px">${l.slice(0, 8).map(x => `<div class="row" style="flex-wrap:nowrap;font-size:13px" data-act="abrir" data-src="tx" data-id="${esc(x.i.id)}" role="button" tabindex="0">
+    <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.i.desc)} <span class="pill">${x.prox.k}/${x.i.n}</span></span><span class="sp"></span>
+    <span class="num" style="white-space:nowrap">${brl(x.prox.v)}<span class="mut">/mês até ${L.fmtYM(x.fim)}</span></span></div>`).join('')}
+  ${l.length > 8 ? `<span class="sub">e mais ${l.length - 8} compras parceladas</span>` : ''}</div>`;
+}
 function blocoParcelas(R) {
   const ms = [1, 2, 3, 4, 5, 6].map(k => L.addMonths(R, k));
   const v = ms.map(s => ({ s, v: sum((S.idx[s] || []).filter(e => e.tipo === 'parcela' && e.t === 'd'), e => e.v), n: (S.idx[s] || []).filter(e => e.tipo === 'parcela').length }));
@@ -392,7 +409,7 @@ function blocoParcelas(R) {
   if (!v.some(x => x.v)) return '<p class="mut" style="margin-top:10px">Nenhuma parcela futura. Cada compra parcelada que você lançar aparece aqui, fatura por fatura.</p>';
   const fim = S.items.filter(i => i.n > 1).map(i => L.parcelasDe(i, F()).slice(-1)[0].ref).sort().slice(-1)[0];
   return `<div class="cols">${v.map(x => `<div class="col" data-tip="${L.fmtYMlong(x.s)}\n${x.n} parcelas · ${brl(x.v)}"><span class="v">${x.v ? kfmt(x.v) : ''}</span><span class="bar" style="height:${x.v / max * 90}px"></span><span>${L.fmtYM(x.s)}</span></div>`).join('')}</div>
-  <p class="sub" style="margin-top:10px">Última parcela termina em ${fim ? L.fmtYMlong(fim) : '—'}.</p>`;
+  <p class="sub" style="margin-top:10px">Última parcela termina em ${fim ? L.fmtYMlong(fim) : '—'}.</p>${listaParcelados(R)}`;
 }
 
 /* ---------- Lançamentos ---------- */
@@ -533,6 +550,19 @@ function secPersonalizar() {
   <div class="row" style="margin-top:12px"><button class="btn sm" data-act="pbReset">Restaurar padrão</button></div>
   </section>`;
 }
+function secImportadas() {
+  const g = {};
+  for (const it of S.items) if (it.t === 'd' && it.pg === 'cc' && it.fat) { const r = g[it.fat] ||= { n: 0, v: 0 }; r.n++; r.v += it.v / (it.n || 1); }
+  const ks = Object.keys(g).sort().reverse();
+  if (!ks.length) return '';
+  return `<section class="card sec" id="importadas"><h3>Faturas importadas <small>mover para outra fatura ou desfazer</small></h3>
+  <div class="tw" style="margin-top:10px"><table><thead><tr><th>Fatura</th><th class="r">Lançamentos</th><th class="r">Valor na fatura</th><th class="r">Ações</th></tr></thead><tbody>
+  ${ks.map(s => `<tr><td>${L.fmtYMlong(s)}</td><td class="r num">${g[s].n}</td><td class="r num">${brl(g[s].v)}</td><td class="r"><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">
+    <select class="i" id="mv-${s}" aria-label="Mover para" style="font-size:12.5px;padding:5px 6px;width:auto">${[-3, -2, -1, 1, 2].map(k => L.addMonths(s, k)).map(o => `<option value="${o}" ${o === L.addMonths(s, -1) ? 'selected' : ''}>${L.fmtYMlong(o)}</option>`).join('')}</select>
+    <button class="btn sm" data-act="moverFat" data-s="${s}">Mover</button><button class="btn sm dng" data-act="excluirFat" data-s="${s}">Excluir</button></div></td></tr>`).join('')}
+  </tbody></table></div>
+  <p class="sub">Lista os lançamentos de cartão que vieram de importação. Mover leva junto as parcelas futuras. Lançamentos feitos à mão não entram aqui.</p></section>`;
+}
 function vAjustes() {
   const c = S.cfg;
   return `<div class="grid g2">
@@ -555,6 +585,7 @@ function vAjustes() {
     <button class="btn" data-act="demo">Ver com dados de exemplo</button>
   </section>
   </div>
+  ${secImportadas()}
   ${secPersonalizar()}
   <section class="card sec"><h3>Categorias e orçamento mensal <small>orçamento 0 = sem limite</small></h3>
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="sugerirOrc">Sugerir orçamentos pela média</button><span class="sub">Essenciais pela média dos 3 últimos meses; estilo de vida com 10% de corte.</span></div>
@@ -719,15 +750,31 @@ function modalAporte(g) {
 }
 
 /* ---------- importação de fatura ---------- */
+function detectarFatura(rows, nome) {
+  // 1) nome do arquivo com a data de vencimento (ex.: Nubank_2026-11-05.csv)
+  const m = /(\d{4})-(\d{2})-(\d{2})/.exec(nome || '');
+  if (m) {
+    const dv = `${m[1]}-${m[2]}-${m[3]}`;
+    for (const k of [-2, -1, 0]) {
+      const c = L.addMonths(`${m[1]}-${m[2]}`, k);
+      if (L.janelaCiclo(c, F(), V()).vence === dv) return { s: c, motivo: `o arquivo vence em ${m[3]}/${m[2]}` };
+    }
+  }
+  // 2) data da compra mais recente (ignora parcelas antigas)
+  const ds = rows.filter(r => r.k === 1).map(r => r.d).sort();
+  if (!ds.length) return null;
+  const ult = ds[ds.length - 1];
+  return { s: L.cicloDe(ult, F()), motivo: `a compra mais recente é de ${L.fmtDia(ult)}` };
+}
 function modalImport() {
   const R = S.ref;
   abrirModal(`<h2>Importar fatura (CSV)${xBtn}</h2>
     <p class="ink2" style="margin-top:0">No app do banco, exporte a fatura em CSV (Nubank, Inter, C6, Itaú e outros oferecem). Colunas esperadas: data, descrição e valor.</p>
-    <div class="fgrid"><label class="f">Fatura de destino<select class="i" id="imp-fat">${[-2, -1, 0, 1].map(k => L.addMonths(R, k)).map(s => `<option value="${s}" ${s === R ? 'selected' : ''}>${L.fmtYMlong(s)}</option>`).join('')}</select></label>
+    <div class="fgrid"><label class="f">Fatura de destino<select class="i" id="imp-fat">${[-3, -2, -1, 0, 1].map(k => L.addMonths(R, k)).map(s => `<option value="${s}" ${s === R ? 'selected' : ''}>${L.fmtYMlong(s)}</option>`).join('')}</select></label>
     <label class="f">Arquivo<input class="i" type="file" id="imp-file" accept=".csv,text/csv"></label></div>
     <div id="imp-prev"></div>`);
 }
-function previewImport(txt) {
+function previewImport(txt, nome) {
   const rows = L.lerFatura(txt);
   if (!rows.length) { $('#imp-prev').innerHTML = '<p class="neg">Não reconheci lançamentos nesse arquivo. Confira se ele tem colunas de data, descrição e valor.</p>'; return; }
   const exist = S.items.filter(i => i.t === 'd');
@@ -739,24 +786,30 @@ function previewImport(txt) {
     return { ...r, i, dup, cat: L.categorizar(r.desc, S.cfg.aprend) };
   });
   previewImport.rows = linhas;
+  const det = detectarFatura(rows, nome), sel = $('#imp-fat');
+  if (det) {
+    if (![...sel.options].some(o => o.value === det.s)) sel.insertAdjacentHTML('beforeend', `<option value="${det.s}">${L.fmtYMlong(det.s)}</option>`);
+    sel.value = det.s;
+  }
   const tot = sum(linhas.filter(l => !l.dup), l => l.v);
-  $('#imp-prev').innerHTML = `<div class="row" style="margin:12px 0 8px"><b>${linhas.length} linhas</b><span class="mut">${linhas.filter(l => l.dup).length} desmarcadas por duplicidade</span><span class="sp"></span><span class="num">${brl(tot)}</span></div>
+  $('#imp-prev').innerHTML = `${det ? `<p class="hint" style="margin:12px 0 0">Identifiquei a <b>fatura de ${L.fmtYMlong(det.s)}</b>, que vence ${L.fmtDia(L.janelaCiclo(det.s, F(), V()).vence)}, porque ${det.motivo}. Se não for essa, troque em "Fatura de destino".</p>` : ''}
+  <div class="row" style="margin:12px 0 8px"><b>${linhas.length} linhas</b><span class="mut">${linhas.filter(l => l.dup).length} desmarcadas por duplicidade</span><span class="sp"></span><span class="num">${brl(tot)}</span></div>
   <div class="tw" style="max-height:46vh"><table><thead><tr><th></th><th>Data</th><th>Descrição</th><th>Categoria</th><th class="r">Valor</th></tr></thead><tbody>
-  ${linhas.map(l => `<tr><td><input type="checkbox" id="imp-c${l.i}" ${l.dup ? '' : 'checked'}></td><td class="num">${L.fmtDia(l.d)}</td><td class="desc">${esc(l.desc)} ${l.n > 1 ? `<span class="pill">${l.k}/${l.n}</span>` : ''} ${l.dup ? `<span class="pill warn">${l.dup}</span>` : ''}</td><td><select class="i" id="imp-s${l.i}" style="font-size:12.5px;padding:5px 6px">${optCats('d', l.cat)}</select></td><td class="r num ${l.v < 0 ? 'pos' : ''}">${brl(l.v)}</td></tr>`).join('')}
+  ${linhas.map(l => `<tr><td><input type="checkbox" id="imp-c${l.i}" ${l.dup ? '' : 'checked'}></td><td class="num">${L.fmtDia(l.d)}</td><td class="desc">${esc(l.desc)} ${l.n > 1 ? `<span class="pill">${l.k}/${l.n}</span>${l.n > l.k && !l.dup ? `<span class="d2">+ ${l.n - l.k} parcelas nas próximas faturas</span>` : ''}` : ''} ${l.dup ? `<span class="pill warn">${l.dup}</span>` : ''}</td><td><select class="i" id="imp-s${l.i}" style="font-size:12.5px;padding:5px 6px">${optCats('d', l.cat)}</select></td><td class="r num ${l.v < 0 ? 'pos' : ''}">${brl(l.v)}</td></tr>`).join('')}
   </tbody></table></div>
-  <p class="sub">Parcela 1/N vira uma compra parcelada e projeta as próximas faturas. Valores negativos entram como estorno.</p>
+  <p class="sub">Compra parcelada projeta as parcelas que faltam: "Parcela 2/12" lança esta e as 10 seguintes. Na próxima fatura a parcela 3/12 é reconhecida e não duplica. Valores negativos entram como estorno.</p>
   <div class="mfoot"><span class="sp"></span><button class="btn pri" data-act="confirmarImport">Importar selecionados</button></div>`;
 }
 async function confirmarImport() {
-  const fat = $('#imp-fat').value, novos = [];
+  const fat = $('#imp-fat').value, novos = [], lote = hoje() + '-' + uid().slice(-4);
   for (const l of previewImport.rows) {
     if (!$('#imp-c' + l.i).checked) continue;
     const cat = $('#imp-s' + l.i).value;
     if (cat !== l.cat) aprender(l.desc, cat);
-    novos.push(novoItem({ d: l.d, desc: l.desc, v: Math.round(l.v * l.n * 100) / 100, t: 'd', pg: 'cc', cat, n: l.n, p0: l.k, fat }));
+    novos.push(novoItem({ d: l.d, desc: l.desc, v: Math.round(l.v * l.n * 100) / 100, t: 'd', pg: 'cc', cat, n: l.n, p0: l.k, fat, imp: lote }));
   }
   if (!novos.length) return toast('Nada selecionado.');
-  if (await act(salvarItens(novos), `${novos.length} lançamentos importados`)) fecharModal();
+  if (await act(salvarItens(novos), `${novos.length} lançamentos importados na fatura de ${L.fmtYM(fat)}`)) { fecharModal(); S.ref = fat; S.filtro = 'cc'; irPara('extrato'); }
 }
 
 /* ===================== exportação ===================== */
@@ -870,6 +923,16 @@ document.addEventListener('click', async e => {
     case 'editFat': S.editFat = b.dataset.s; render(); setTimeout(() => $('#conf-v')?.focus(), 30); break;
     case 'fatPaga': { const on = b.dataset.v === '1'; act(S.store.mergeMes(b.dataset.s, { fat: { paga: on, pagaEm: on ? hoje() : null } }), on ? 'Fatura marcada como paga' : 'Marcação desfeita'); break; }
     case 'lancarDif': { const r = b.dataset.s, j = L.janelaCiclo(r, F(), V()); act(salvarItens([novoItem({ d: j.fim, desc: 'Diferença da fatura (não identificado)', v: +b.dataset.v, t: 'd', pg: 'cc', cat: 'outros', fat: r })]), 'Diferença lançada em Outros'); break; }
+    case 'moverFat': {
+      const s0 = b.dataset.s, dest = $('#mv-' + s0).value;
+      const its = S.items.filter(i => i.t === 'd' && i.pg === 'cc' && i.fat === s0).map(i => ({ ...i, fat: dest }));
+      if (await act(salvarItens(its), `${its.length} lançamentos movidos para ${L.fmtYM(dest)}`)) render();
+      break;
+    }
+    case 'excluirFat': confirmar(b, 'Confirmar exclusão', async () => {
+      const its = S.items.filter(i => i.t === 'd' && i.pg === 'cc' && i.fat === b.dataset.s);
+      if (await act(excluirItens(its), `${its.length} lançamentos excluídos`)) render();
+    }); break;
     case 'novo': if (precisa()) modalLanc(); break;
     case 'filtro': S.filtro = b.dataset.f; render(); break;
     case 'verCat': S.filtro = 'cat:' + b.dataset.cat; irPara('extrato'); break;
@@ -1000,7 +1063,7 @@ document.addEventListener('change', e => {
   const rd = new FileReader();
   rd.onload = () => { if (e.target.id === 'imp-file') previewImport(String(rd.result)); else if (e.target.id === 'impJSON') importJSON(String(rd.result)); };
   // faturas de bancos antigos vêm em latin-1; tenta UTF-8 e cai para latin-1 se aparecer caractere inválido
-  if (e.target.id === 'imp-file') { f.arrayBuffer().then(buf => { let t = new TextDecoder('utf-8').decode(buf); if (t.includes('\uFFFD')) t = new TextDecoder('windows-1252').decode(buf); previewImport(t); }); return; }
+  if (e.target.id === 'imp-file') { f.arrayBuffer().then(buf => { let t = new TextDecoder('utf-8').decode(buf); if (t.includes('\uFFFD')) t = new TextDecoder('windows-1252').decode(buf); previewImport(t, f.name); }); return; }
   rd.readAsText(f);
 });
 let bt;

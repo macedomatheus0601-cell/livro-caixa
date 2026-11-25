@@ -34,7 +34,7 @@ function mergeCfg(c) {
 const S = {
   cfg: cfgPadrao(), temCfg: false, items: [], ovr: {}, bucket: {}, idx: {}, cache: {},
   store: null, realStore: null, lastRaw: null, status: 'conectando', loaded: false, demo: false,
-  view: 'painel', ref: null, filtro: 'todos', busca: '', user: null, fb: null, precisaLogin: false, todosInsights: false,
+  view: 'painel', ref: null, filtro: 'todos', busca: '', user: null, fb: null, precisaLogin: false, fat: {}, editFat: null, todosInsights: false,
 };
 const F = () => S.cfg.cartao.fecha, V = () => S.cfg.cartao.vence;
 const hoje = () => L.todayISO();
@@ -68,10 +68,11 @@ function applyRaw(raw) {
   if (S.demo && S.store.kind !== 'demo') return;
   S.temCfg = !!raw.cfg;
   S.cfg = mergeCfg(raw.cfg);
-  S.items = []; S.ovr = {}; S.bucket = {};
+  S.items = []; S.ovr = {}; S.bucket = {}; S.fat = {};
   for (const [s, doc] of Object.entries(raw.meses || {})) {
     for (const [id, it] of Object.entries((doc && doc.items) || {})) if (it) { S.items.push({ ...it, id }); S.bucket[id] = s; }
     for (const [fid, o] of Object.entries((doc && doc.ovr) || {})) if (o) (S.ovr[s] ||= {})[fid] = { ...o };
+    if (doc && doc.fat) S.fat[s] = { ...doc.fat };
   }
   S.loaded = true;
   if (!S.ref) S.ref = cicloAtual();
@@ -172,9 +173,15 @@ function insights(R) {
     const alvo = Math.ceil((ess || t.despFixa) * 6 / 500) * 500;
     if (alvo > 0) out.push({ k: 'reserva', n: 'atencao', tit: 'Sem reserva de emergência', txt: `Primeira meta recomendada: 6 meses do custo essencial, cerca de ${brl0(alvo)}. Deixe em liquidez diária (Tesouro Selic ou CDB 100% CDI).`, acao: 'reserva', alvo });
   }
+  if (corrente) {
+    const ant1 = L.addMonths(R, -1), fa = S.fat[ant1] || {};
+    const temCC = (S.idx[ant1] || []).some(e => e.pg === 'cc' && e.t === 'd');
+    if (temCC && fa.banco == null) out.push({ k: 'conferir', n: 'info', tit: `Fatura de ${L.fmtYMlong(ant1)} fechou`, txt: 'Digite o total cobrado pelo banco para conferir se nenhum gasto ficou de fora.', acao: 'conferir', s: ant1 });
+    else if (temCC && !fa.paga && hoje() > L.janelaCiclo(ant1, F(), V()).vence) out.push({ k: 'conferir', n: 'atencao', tit: `Fatura de ${L.fmtYMlong(ant1)} não marcada como paga`, txt: 'Já passou do vencimento. Se você pagou, marque como paga para manter o controle em dia.', acao: 'conferir', s: ant1 });
+  }
   const ord = { critico: 0, atencao: 1, info: 2, bom: 3 };
   const off = S.cfg.painel.alertasOff;
-  return out.filter(i => !off.includes(i.k)).sort((a, b) => ord[a.n] - ord[b.n] || (b.g || 0) - (a.g || 0));
+  return out.filter(i => !off.includes(i.k)).sort((a, b) => (b.k === 'conferir') - (a.k === 'conferir') || ord[a.n] - ord[b.n] || (b.g || 0) - (a.g || 0));
 }
 
 /* ===================== render ===================== */
@@ -284,7 +291,7 @@ function vPainel(R) {
     atacar: () => {
       const l = ins(), mostra = S.todosInsights ? l : l.slice(0, 5);
       return `<section class="card"><h3>Onde atacar <small>${l.length} pontos</small></h3>
-    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
+    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.acao === 'conferir' ? `<button class="btn sm" style="margin-top:8px" data-act="irMes" data-s="${i.s}">Abrir fatura</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
     ${l.length > 5 ? `<button class="btn sm" style="margin-top:10px" data-act="todosIns">${S.todosInsights ? 'Mostrar menos' : `Ver todos (${l.length})`}</button>` : ''}
   </section>`;
     },
@@ -323,9 +330,23 @@ function cardResumoFatura(R, jan) {
     <div class="sub">${cc.length} lançamentos · ${brl0(sum(cc.filter(e => e.tipo === 'fixo'), e => e.v))} fixos · ${brl0(sum(cc.filter(e => e.tipo === 'parcela'), e => e.v))} parcelas</div>
     <div class="lbl" style="margin-top:14px">Maiores gastos</div>
     <div style="display:grid;gap:6px;margin-top:6px">${top.map(e => `<div class="row" style="flex-wrap:nowrap"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(e.desc)} ${e.parc ? `<span class="pill">${e.parc}</span>` : ''}</span><span class="sp"></span><span class="num">${brl(e.v)}</span></div>`).join('') || '<span class="mut">Nada no cartão neste mês.</span>'}</div>
+    ${R < cicloAtual() ? blocoConferencia(R, m.t.fatura) : ''}
   </section>`;
 }
 
+function blocoConferencia(R, total) {
+  const f = S.fat[R] || {};
+  if (f.banco == null || S.editFat === R) return `<div class="divider"></div><span class="lbl">Conferir com o banco</span>
+    <p class="sub" style="margin:4px 0 8px">Digite o total cobrado pelo banco nesta fatura.</p>
+    <form class="row" id="fConf" data-s="${R}"><input class="i num" id="conf-v" inputmode="decimal" placeholder="0,00" style="flex:1;min-width:140px" value="${f.banco != null ? String(f.banco).replace('.', ',') : ''}"><button class="btn pri" type="submit">Conferir</button></form>`;
+  const dif = Math.round((f.banco - total) * 100) / 100, ok = Math.abs(dif) < 1;
+  const pill = ok ? '<span class="pill good">bate com o banco</span>' : dif > 0 ? `<span class="pill warn">faltam ${brl(dif)} no app</span>` : `<span class="pill warn">app tem ${brl(-dif)} a mais</span>`;
+  return `<div class="divider"></div><div class="row"><span class="lbl">Conferência</span><span class="sp"></span>${pill}</div>
+    <div class="kv kv3"><div><div class="lbl">Banco</div><div class="num">${brl(f.banco)}</div></div><div><div class="lbl">App</div><div class="num">${brl(total)}</div></div><div><div class="lbl">Diferença</div><div class="num ${ok ? '' : 'neg'}">${brl(dif)}</div></div></div>
+    <div class="row" style="margin-top:12px">${f.paga ? `<span class="pill good">paga${f.pagaEm ? ' em ' + L.fmtDia(f.pagaEm) : ''}</span><button class="btn sm" data-act="fatPaga" data-s="${R}" data-v="0">Desfazer</button>` : `<button class="btn sm pri" data-act="fatPaga" data-s="${R}" data-v="1">Marcar como paga</button>`}
+    ${!ok && dif > 0 ? `<button class="btn sm" data-act="importar">Importar CSV</button><button class="btn sm" data-act="lancarDif" data-s="${R}" data-v="${dif}">Lançar diferença</button>` : ''}<button class="btn sm" data-act="editFat" data-s="${R}">Editar valor</button></div>
+    ${!ok ? `<p class="sub" style="margin:8px 0 0">${dif > 0 ? 'Algo ficou sem lançar. Importe o CSV da fatura para achar o que falta, ou lance a diferença em Outros.' : 'Pode haver lançamento duplicado ou estorno não registrado. Confira o Extrato com o filtro Cartão.'}</p>` : ''}`;
+}
 function blocoCategorias(R) {
   const m = M(R), ant = mesesAnteriores(R);
   const rows = S.cfg.cats.filter(c => c.t === 'd').map(c => {
@@ -489,7 +510,7 @@ function vMetas() {
 /* ---------- Ajustes ---------- */
 
 const PAINEL_BLOCOS = [['sobra', 'Sobra do mês'], ['ritmo', 'Pode gastar por dia (mês atual) ou resumo da fatura'], ['indicadores', 'Indicadores: receitas, fatura, conta, poupança'], ['atacar', 'Onde atacar'], ['categorias', 'Gastos por categoria'], ['tendencia', 'Receitas x despesas (6 meses)'], ['parcelas', 'Parcelas já comprometidas'], ['divisao', 'Divisão da renda 50/30/20']];
-const ALERTAS = [['poupanca', 'Taxa de poupança do mês'], ['estouro', 'Limite do ciclo estourado'], ['orcamento', 'Categoria acima do orçamento'], ['crescimento', 'Categoria que subiu contra a média'], ['juros', 'Juros, IOF e tarifas'], ['fixos', 'Fixos acima de 50% da renda'], ['parcelas', 'Parcelas na próxima fatura'], ['assinaturas', 'Custo anual das assinaturas'], ['formiga', 'Compras pequenas somadas'], ['reserva', 'Falta de reserva de emergência']];
+const ALERTAS = [['poupanca', 'Taxa de poupança do mês'], ['estouro', 'Limite do ciclo estourado'], ['orcamento', 'Categoria acima do orçamento'], ['crescimento', 'Categoria que subiu contra a média'], ['juros', 'Juros, IOF e tarifas'], ['fixos', 'Fixos acima de 50% da renda'], ['parcelas', 'Parcelas na próxima fatura'], ['assinaturas', 'Custo anual das assinaturas'], ['formiga', 'Compras pequenas somadas'], ['reserva', 'Falta de reserva de emergência'], ['conferir', 'Lembrete de conferir a fatura fechada']];
 function painelOrdem() {
   const ids = PAINEL_BLOCOS.map(b => b[0]);
   const o = (S.cfg.painel.ordem || []).filter(id => ids.includes(id));
@@ -551,17 +572,29 @@ const xBtn = '<button class="ibtn" data-act="fechar" aria-label="Fechar">✕</bu
 const optCats = (t, sel) => S.cfg.cats.filter(c => c.t === t).map(c => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.nome)}</option>`).join('');
 const valNum = s => { const v = L.parseValor(s); return isFinite(v) ? Math.round(v * 100) / 100 : NaN; };
 
+function recentes(n = 8) {
+  const lim = L.addMonths(hoje().slice(0, 7), -4), g = {};
+  for (const it of S.items) {
+    if (it.d.slice(0, 7) < lim || /^Aporte: /.test(it.desc)) continue;
+    const k = L.norm(it.desc); if (!k) continue;
+    const r = g[k] ||= { n: 0, it }; r.n++; if (it.d > r.it.d) r.it = it;
+  }
+  return Object.values(g).sort((a, b) => b.n - a.n || b.it.d.localeCompare(a.it.d)).slice(0, n).map(r => r.it);
+}
 function modalLanc(it) {
   const ed = !!it;
   const x = it ? { ...it } : { t: 'd', pg: 'cc', d: hoje(), n: 1, cat: '', desc: '', v: '' };
   let catManual = ed;
+  const rec = ed ? [] : recentes(8), sug = ed ? [] : recentes(60);
   abrirModal(`<h2>${ed ? 'Editar lançamento' : 'Novo lançamento'}${xBtn}</h2>
+  ${rec.length ? `<div style="margin:-4px 0 14px"><div class="lbl" style="margin-bottom:6px">Recentes · toque e digite só o valor</div><div class="chips" id="l-rec">${rec.map((r, i) => `<button type="button" data-i="${i}">${esc(r.desc)}</button>`).join('')}</div></div>` : ''}
+  <datalist id="l-list">${sug.map(r => `<option value="${esc(r.desc)}"></option>`).join('')}</datalist>
   <form id="fL" class="fgrid">
     <div class="full row"><div class="seg" id="lt"><button type="button" data-v="d" aria-pressed="${x.t === 'd'}">Despesa</button><button type="button" data-v="r" aria-pressed="${x.t === 'r'}">Receita</button></div>
     <div class="seg" id="lp" ${x.t === 'r' ? 'hidden' : ''}><button type="button" data-v="cc" aria-pressed="${x.pg === 'cc'}">Cartão</button><button type="button" data-v="conta" aria-pressed="${x.pg === 'conta'}">Pix / débito</button></div></div>
     <label class="f">Valor total (R$)<input class="i num" id="l-v" inputmode="decimal" autofocus required value="${x.v !== '' ? String(x.v).replace('.', ',') : ''}" placeholder="0,00" style="font-size:20px"></label>
     <label class="f">Data da compra<input class="i" id="l-d" type="date" required value="${x.d}"></label>
-    <label class="f full">Descrição<input class="i" id="l-desc" required value="${esc(x.desc)}" placeholder="Ex.: Mercado, iFood, Uber"></label>
+    <label class="f full">Descrição<input class="i" id="l-desc" required list="l-list" autocomplete="off" value="${esc(x.desc)}" placeholder="Ex.: Mercado, iFood, Uber"></label>
     <label class="f">Categoria<select class="i" id="l-cat">${optCats(x.t, x.cat)}</select></label>
     <label class="f" id="l-nw" ${x.t === 'r' || x.pg !== 'cc' ? 'hidden' : ''}>Parcelas<input class="i num" id="l-n" type="number" min="1" max="48" value="${x.n || 1}"></label>
     <div class="hint full" id="l-hint"></div>
@@ -584,6 +617,23 @@ function modalLanc(it) {
     $('#l-cat').addEventListener('change', () => { catManual = true; });
     ['#l-d', '#l-v', '#l-n'].forEach(s => $(s).addEventListener('input', hint));
     if (!ed) $('#l-cat').value = 'outros';
+    const setSeg = (id, v) => $(id).querySelectorAll('button').forEach(z => z.setAttribute('aria-pressed', z.dataset.v === v));
+    const aplicar = r => {
+      st.t = r.t; st.pg = r.t === 'r' ? 'conta' : r.pg;
+      setSeg('#lt', st.t); setSeg('#lp', st.pg);
+      $('#lp').hidden = st.t === 'r'; $('#l-nw').hidden = st.t === 'r' || st.pg !== 'cc';
+      $('#l-cat').innerHTML = optCats(st.t, r.cat); $('#l-cat').value = r.cat;
+      $('#l-v').placeholder = 'último: ' + brl(r.v / (r.n || 1)).replace('R$', '').trim();
+      hint();
+    };
+    if ($('#l-rec')) $('#l-rec').addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      const r = rec[+b.dataset.i]; $('#l-desc').value = r.desc; aplicar(r); catManual = false; $('#l-v').focus();
+    });
+    $('#l-desc').addEventListener('change', () => {
+      if (catManual) return;
+      const r = sug.find(z => L.norm(z.desc) === L.norm($('#l-desc').value)); if (r) aplicar(r);
+    });
     hint();
     $('#fL').addEventListener('submit', e => { e.preventDefault(); $('#md [data-act="salvarLanc"]:not([data-mais])').click(); });
     modalLanc.st = st; modalLanc.orig = it; modalLanc.catManual = () => catManual;
@@ -628,9 +678,20 @@ function modalFixo(f, t) {
     <label class="f">Dia<select class="i" id="f-dia"><option value="util" ${x.dia === 'util' ? 'selected' : ''}>Último dia útil</option>${Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${+x.dia === i + 1 ? 'selected' : ''}>Dia ${i + 1}</option>`).join('')}</select></label>
     <label class="f">Começa em<input class="i" id="f-ini" type="month" value="${x.ini || ''}"></label>
     <label class="f">Termina em <small class="mut">(opcional)</small><input class="i" id="f-fim" type="month" value="${x.fim || ''}"></label>
+    ${ed ? `<div class="full" style="display:grid;gap:8px"><span class="lbl">Ao mudar valor, dia, forma ou categoria</span>
+      <div class="seg" id="f-modo"><button type="button" data-v="apartir" aria-pressed="true">Vale a partir de um mês</button><button type="button" data-v="todos" aria-pressed="false">Corrigir todos os meses</button></div>
+      <label class="f" id="f-desdew" style="max-width:220px">A partir de<input class="i" id="f-desde" type="month" value="${S.ref}"></label>
+      <p class="sub" id="f-modoh" style="margin:0">Os meses anteriores continuam com o valor antigo. Use para reajuste de salário, aluguel, plano.</p></div>` : ''}
   </form>
   <div class="mfoot">${ed ? `<button class="btn" data-act="encerrarFixo">Encerrar a partir de ${L.fmtYM(S.ref)}</button><button class="btn dng" data-act="delFixo">Excluir do histórico</button>` : ''}<span class="sp"></span><button class="btn pri" data-act="salvarFixo">Salvar</button></div>`);
-  modalFixo.ctx = { f, t: x.t };
+  modalFixo.ctx = { f, t: x.t, modo: 'apartir' };
+  if (ed) $('#f-modo').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    modalFixo.ctx.modo = b.dataset.v;
+    $('#f-modo').querySelectorAll('button').forEach(z => z.setAttribute('aria-pressed', z === b));
+    $('#f-desdew').hidden = b.dataset.v !== 'apartir';
+    $('#f-modoh').textContent = b.dataset.v === 'apartir' ? 'Os meses anteriores continuam com o valor antigo. Use para reajuste de salário, aluguel, plano.' : 'Muda o fixo em todo o histórico. Use só para corrigir um cadastro errado.';
+  });
 }
 
 function modalMeta(g, alvo) {
@@ -806,6 +867,9 @@ document.addEventListener('click', async e => {
     case 'alToggle': { const k = b.dataset.k, off = S.cfg.painel.alertasOff; S.cfg.painel.alertasOff = b.checked ? off.filter(x => x !== k) : [...new Set([...off, k])]; act(salvarCfg()); render(); break; }
     case 'pbMove': { const o = painelOrdem(), i = o.indexOf(b.dataset.id), j = i + +b.dataset.k; if (j < 0 || j >= o.length) break; [o[i], o[j]] = [o[j], o[i]]; S.cfg.painel.ordem = o; act(salvarCfg()); render(); const nb = document.querySelector(`[data-act="pbMove"][data-id="${b.dataset.id}"][data-k="${b.dataset.k}"]`); (nb && !nb.disabled ? nb : document.querySelector(`#pb-${b.dataset.id}`))?.focus({ preventScroll: true }); break; }
     case 'pbReset': S.cfg.painel = { ordem: [], ocultos: [], alertasOff: [] }; act(salvarCfg(), 'Painel restaurado'); render(); break;
+    case 'editFat': S.editFat = b.dataset.s; render(); setTimeout(() => $('#conf-v')?.focus(), 30); break;
+    case 'fatPaga': { const on = b.dataset.v === '1'; act(S.store.mergeMes(b.dataset.s, { fat: { paga: on, pagaEm: on ? hoje() : null } }), on ? 'Fatura marcada como paga' : 'Marcação desfeita'); break; }
+    case 'lancarDif': { const r = b.dataset.s, j = L.janelaCiclo(r, F(), V()); act(salvarItens([novoItem({ d: j.fim, desc: 'Diferença da fatura (não identificado)', v: +b.dataset.v, t: 'd', pg: 'cc', cat: 'outros', fat: r })]), 'Diferença lançada em Outros'); break; }
     case 'novo': if (precisa()) modalLanc(); break;
     case 'filtro': S.filtro = b.dataset.f; render(); break;
     case 'verCat': S.filtro = 'cat:' + b.dataset.cat; irPara('extrato'); break;
@@ -827,8 +891,20 @@ document.addEventListener('click', async e => {
       if (!desc || !isFinite(v)) return toast('Preencha descrição e valor.');
       const dia = $('#f-dia').value;
       const nf = { id: f?.id || uid(), desc, v, t, cat: $('#f-cat').value, pg: t === 'r' ? 'conta' : $('#f-pg').value, dia: dia === 'util' ? 'util' : +dia, ini: $('#f-ini').value || null, fim: $('#f-fim').value || null };
-      S.cfg.fixos = f ? S.cfg.fixos.map(x => x.id === f.id ? nf : x) : [...S.cfg.fixos, nf];
-      if (await act(salvarCfg(), 'Fixo salvo')) fecharModal();
+      let msg = 'Fixo salvo';
+      if (!f) S.cfg.fixos = [...S.cfg.fixos, nf];
+      else {
+        const mudou = ['v', 'cat', 'pg', 'dia'].some(k => String(nf[k]) !== String(f[k]));
+        const desde = $('#f-desde') && $('#f-desde').value;
+        if (mudou && modalFixo.ctx.modo === 'apartir' && desde && (!f.ini || desde > f.ini)) {
+          // encerra o fixo antigo no mês anterior e cria o novo a partir de "desde"
+          const antigo = { ...f, desc: nf.desc, fim: L.addMonths(desde, -1) };
+          const novo = { ...nf, id: uid(), ini: desde, fim: nf.fim && nf.fim >= desde ? nf.fim : null };
+          S.cfg.fixos = [...S.cfg.fixos.map(x => x.id === f.id ? antigo : x), novo];
+          msg = `Novo valor a partir de ${L.fmtYM(desde)}. Meses anteriores preservados.`;
+        } else S.cfg.fixos = S.cfg.fixos.map(x => x.id === f.id ? nf : x);
+      }
+      if (await act(salvarCfg(), msg)) fecharModal();
       break;
     }
     case 'encerrarFixo': { const { f } = modalFixo.ctx; S.cfg.fixos = S.cfg.fixos.map(x => x.id === f.id ? { ...x, fim: L.addMonths(R, -1) } : x); if (await act(salvarCfg(), `${f.desc} encerrado em ${L.fmtYM(L.addMonths(R, -1))}`)) fecharModal(); break; }
@@ -905,6 +981,11 @@ document.addEventListener('submit', async e => {
     if (!fx.length) return toast('Preencha ao menos o salário.');
     S.cfg.fixos = [...S.cfg.fixos, ...fx];
     act(salvarCfg(), 'Pronto. Agora lance os gastos com o botão +');
+  } else if (e.target.id === 'fConf') {
+    const v = valNum($('#conf-v').value), r = e.target.dataset.s;
+    if (!isFinite(v)) return toast('Digite o valor da fatura.');
+    S.editFat = null;
+    act(S.store.mergeMes(r, { fat: { banco: v, em: hoje() } }), 'Fatura conferida');
   } else if (e.target.id === 'fCartao') {
     const fe = +$('#cc-fecha').value, ve = +$('#cc-vence').value, mt = +$('#cc-meta').value;
     if (!(fe >= 1 && fe <= 31 && ve >= 1 && ve <= 31)) return toast('Dias entre 1 e 31.');

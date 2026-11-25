@@ -28,6 +28,8 @@ function mergeCfg(c) {
   for (const k of ['cats', 'fixos', 'metas']) if (!Array.isArray(out[k])) out[k] = d[k];
   if (!out.cats.some(c => c.id === 'ajuste')) out.cats.push(d.cats.find(c => c.id === 'ajuste'));
   out.aprend = out.aprend || {};
+  out.prevMes = out.prevMes && typeof out.prevMes === 'object' ? out.prevMes : {};
+  if (out.prevVar === undefined) out.prevVar = null;
   if (!Array.isArray(out.recIgnorar)) out.recIgnorar = [];
   out.painel = { ordem: [], ocultos: [], alertasOff: [], ...(x.painel || {}) };
   return out;
@@ -463,6 +465,10 @@ function linhasFluxo(R) {
   const G = { rec: {}, fix: {}, par: {}, var: {}, aju: {} };
   const z = () => cols.map(() => 0), poup = z(), cc = z(), conta = z();
   const add = (g, k, nome, i, v) => { (G[g][k] ||= { nome, v: z() }).v[i] += v; };
+  // previsão de gastos variáveis: valor do usuário (ou a média), com mudanças "a partir de" um mês
+  const padrao = S.cfg.prevVar != null ? S.cfg.prevVar : Math.round(varMed);
+  const prevDe = s => { let v = padrao; for (const k of Object.keys(S.cfg.prevMes).sort()) if (k <= s) v = S.cfg.prevMes[k]; return v; };
+  const prv = z();
   cols.forEach((s, i) => {
     const vr = {};
     for (const e of M(s).entradas) {
@@ -474,22 +480,23 @@ function linhasFluxo(R) {
       if (e.tipo === 'fixo') { const k = e.fixoId || e.id; add('fix', k, fxNome[k] || e.desc, i, e.v); }
       else add('par', e.id, `${e.desc} (${e.n}x)`, i, e.v);
     }
-    if (s >= atual) for (const [c, v] of Object.entries(catMed)) if ((vr[c] || 0) < v) { cc[i] += v - (vr[c] || 0); vr[c] = v; } // previsão: no mínimo a média
+    if (s >= atual) { prv[i] = Math.max(0, prevDe(s) - sum(Object.values(vr))); cc[i] += prv[i]; } // o que falta gastar até a previsão
     for (const [c, v] of Object.entries(vr)) { add('var', c, catById(c).nome, i, v); if (isPoup(c)) poup[i] += v; }
   });
   const tot = g => cols.map((_, i) => sum(Object.values(G[g]), r => r.v[i]));
   const ord = g => Object.values(G[g]).filter(r => r.v.some(v => Math.abs(v) >= 0.5)).sort((a, b) => sum(b.v) - sum(a.v));
   const rec = tot('rec'), fix = tot('fix'), par = tot('par'), vr = tot('var'), aju = tot('aju');
-  const desp = cols.map((_, i) => fix[i] + par[i] + vr[i] + aju[i]), sobra = cols.map((_, i) => rec[i] - desp[i]);
+  const desp = cols.map((_, i) => fix[i] + par[i] + vr[i] + prv[i] + aju[i]), sobra = cols.map((_, i) => rec[i] - desp[i]);
   let a = 0; const acum = sobra.map(v => (a += v));
   return {
-    cols, atual, varMed, rec, desp, sobra, acum, cc, conta,
+    cols, atual, varMed, padrao, prevDe, rec, desp, sobra, acum, cc, conta,
     taxa: cols.map((_, i) => rec[i] ? (sobra[i] + poup[i]) / rec[i] : null),
     grupos: [
       { id: 'rec', sinal: '+', nome: 'Receitas', tot: rec, det: ord('rec') },
       { id: 'fix', sinal: '−', nome: 'Despesas fixas', tot: fix, det: ord('fix') },
       { id: 'par', sinal: '−', nome: 'Parcelas', tot: par, det: ord('par') },
-      { id: 'var', sinal: '−', nome: 'Gastos variáveis', tot: vr, det: ord('var'), est: true },
+      { id: 'var', sinal: '−', nome: 'Gastos variáveis', tot: vr, det: ord('var') },
+      { id: 'prv', sinal: '−', nome: 'Previsão da fatura', tot: prv, det: [], prev: true },
       ...(aju.some(v => Math.abs(v) >= 0.5) ? [{ id: 'aju', sinal: '−', nome: 'Ajustes de saldo', tot: aju, det: ord('aju') }] : []),
     ],
   };
@@ -501,6 +508,7 @@ function vFluxo(R) {
   const tds = (arr, est, f = fmt, cls = () => '') => arr.map((v, i) => `<td class="r num ${st(cols[i])} ${est && cols[i] >= atual ? 'est' : ''} ${cls(v)}">${f(v)}</td>`).join('');
   const chev = '<svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const grupo = g => {
+    if (g.prev) return `<tr class="g prv"><td><span class="fxg" style="cursor:default">${chev.replace('class="chev"', 'class="chev" style="visibility:hidden"')}<span class="sg">(${g.sinal})</span>${g.nome}</span></td>${g.tot.map((v, i) => cols[i] < atual ? `<td class="r num real"><span class="mut">–</span></td>` : `<td class="r num ${st(cols[i])} est"><button class="cellbtn ${S.cfg.prevMes[cols[i]] != null ? 'mk' : ''}" data-act="editPrev" data-s="${cols[i]}" aria-label="Alterar previsão de ${L.fmtYM(cols[i])}">${fmt(v)}</button></td>`).join('')}</tr>`;
     const on = ab.has(g.id);
     return `<tr class="g"><td><button class="fxg" data-act="fxToggle" data-g="${g.id}" aria-expanded="${on}" ${g.det.length ? '' : 'disabled'}>${chev}<span class="sg">(${g.sinal})</span>${g.nome}</button></td>${tds(g.tot, g.est)}</tr>
     ${g.det.map(d => `<tr class="d" data-of="${g.id}" ${on ? '' : 'hidden'}><td title="${esc(d.nome)}">${esc(d.nome)}</td>${tds(d.v, g.est)}</tr>`).join('')}`;
@@ -511,8 +519,12 @@ function vFluxo(R) {
   const pgOn = ab.has('pg');
   const todosAbertos = FLUXO_GRUPOS.every(g => ab.has(g));
   return `<div class="row" style="margin-bottom:12px;align-items:flex-end"><div style="min-width:0"><h2 style="font-size:18px">Fluxo de caixa</h2>
-    <p class="sub" style="margin:2px 0 0">Mês de referência = salário do mês + fatura que vence no início do seguinte. Previsão: fixos, parcelas já lançadas e gastos variáveis pela média dos últimos 3 meses fechados (${brl0(X.varMed)}).</p></div>
+    <p class="sub" style="margin:2px 0 0">Mês de referência = salário do mês + fatura que vence no início do seguinte. Previsão: fixos, parcelas já lançadas e a previsão da fatura que você define.</p></div>
     <span class="sp"></span><button class="btn sm" data-act="fxTodos" data-v="${todosAbertos ? 0 : 1}">${todosAbertos ? 'Recolher tudo' : 'Expandir tudo'}</button><button class="btn sm" data-act="exportFluxo">Exportar CSV</button></div>
+  <div class="card" style="margin-bottom:12px"><div class="row" style="align-items:flex-end;gap:14px">
+    <label class="f" style="width:240px;max-width:100%">Previsão de gastos variáveis por mês<input class="i num" id="prev-var" inputmode="decimal" placeholder="${brl0(X.varMed)} (média)" value="${S.cfg.prevVar != null ? S.cfg.prevVar.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : ''}"></label>
+    <p class="sub" style="margin:0;flex:1 1 260px;min-width:0">Quanto você pretende gastar no cartão além de fixos e parcelas. Entra como <b>Previsão da fatura</b> nos meses à frente. Para baixar aos poucos, toque no valor de um mês e mude dele em diante. Vazio usa a média dos últimos meses fechados (${brl0(X.varMed)}).</p>
+  </div></div>
   <div class="tw"><table class="flux dre">
   <thead><tr class="band"><th></th>${bands.map(b => `<th colspan="${b.n}" class="${b.k}"><span>${BN[b.k]}</span></th>`).join('')}</tr>
   <tr><th>Demonstrativo</th>${cols.map(s => `<th class="r ${st(s)} ${s === atual ? 'cur' : ''}" style="cursor:pointer" data-act="irMes" data-s="${s}">${L.fmtYM(s)}</th>`).join('')}</tr></thead>
@@ -527,7 +539,7 @@ function vFluxo(R) {
     <tr class="d" data-of="pg" ${pgOn ? '' : 'hidden'}><td>Fatura do cartão</td>${tds(X.cc, true)}</tr>
     <tr class="d" data-of="pg" ${pgOn ? '' : 'hidden'}><td>Em conta (Pix, boleto)</td>${tds(X.conta, false)}</tr>
   </tbody></table></div>
-  <p class="sub">Toque num grupo para abrir o detalhe. Valores em itálico são estimativa. Negativos entre parênteses. Toque no mês para abrir o painel dele.</p>`;
+  <p class="sub">Toque num grupo para abrir o detalhe. Valores em itálico são estimativa; os da Previsão da fatura são editáveis (• = mudança a partir daquele mês). Negativos entre parênteses. Toque no mês para abrir o painel dele.</p>`;
 }
 
 /* ---------- Fixos ---------- */
@@ -787,6 +799,16 @@ function aprender(desc, cat) {
   act(salvarCfg());
 }
 
+function modalPrev(s) {
+  const X = linhasFluxo(S.ref), atualV = X.prevDe(s), marcado = S.cfg.prevMes[s] != null;
+  const real = sum(M(s).entradas.filter(e => e.t === 'd' && e.tipo === 'variavel' && !isAjuste(e.cat)), e => e.v);
+  abrirModal(`<h2>Previsão da fatura · ${L.fmtYMlong(s)}${xBtn}</h2>
+    <p class="ink2" style="margin-top:0">Gastos variáveis que você espera no mês, fora fixos e parcelas. Padrão: ${brl0(X.padrao)}.${real ? ` Já lançado no mês: ${brl(real)}.` : ''}</p>
+    <label class="f">Valor de ${L.fmtYM(s)} em diante<input class="i num" id="pm-v" inputmode="decimal" value="${atualV.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}" autofocus></label>
+    <p class="sub">Vale deste mês até a próxima mudança. Ex.: 2.500 em dez, 2.200 em mar, 2.000 em jun.</p>
+    <div class="mfoot">${marcado ? '<button class="btn" data-act="pmRemover">Remover mudança</button>' : ''}<span class="sp"></span><button class="btn pri" data-act="pmSalvar">Salvar</button></div>`);
+  modalPrev.s = s;
+}
 function modalFixoMes(f, R) {
   const o = (S.ovr[R] || {})[f.id];
   const atual = o && o.v != null ? o.v : f.v;
@@ -1063,6 +1085,9 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'fxTodos': salvarAbertos(new Set(b.dataset.v === '1' ? FLUXO_GRUPOS : [])); render(); break;
+    case 'editPrev': modalPrev(b.dataset.s); break;
+    case 'pmSalvar': { const v = valNum($('#pm-v').value); if (!isFinite(v) || v < 0) return toast('Valor inválido.'); S.cfg.prevMes = { ...S.cfg.prevMes, [modalPrev.s]: v }; if (await act(salvarCfg(), `Previsão de ${brl0(v)} a partir de ${L.fmtYM(modalPrev.s)}`)) { fecharModal(); render(); } break; }
+    case 'pmRemover': { const pm = { ...S.cfg.prevMes }; delete pm[modalPrev.s]; S.cfg.prevMes = pm; if (await act(salvarCfg(), 'Mudança removida')) { fecharModal(); render(); } break; }
     case 'novo': if (precisa()) modalLanc(); break;
     case 'filtro': S.filtro = b.dataset.f; render(); break;
     case 'verCat': S.filtro = 'cat:' + b.dataset.cat; irPara('extrato'); break;
@@ -1188,6 +1213,11 @@ document.addEventListener('submit', async e => {
   }
 });
 document.addEventListener('change', e => {
+  if (e.target.id === 'prev-var') {
+    const t = e.target.value.trim(), v = t ? valNum(t) : null;
+    if (v != null && (!isFinite(v) || v < 0)) return toast('Valor inválido.');
+    S.cfg.prevVar = v; act(salvarCfg(), v == null ? 'Previsão volta a usar a média' : `Previsão de ${brl0(v)} por mês`); render(); return;
+  }
   if (e.target.dataset && e.target.dataset.act === 'fixoCatSel') {
     const id = e.target.dataset.id, cat = e.target.value;
     S.cfg.fixos = S.cfg.fixos.map(f => f.id === id ? { ...f, cat, ...(f.auto ? { rev: true } : {}) } : f);

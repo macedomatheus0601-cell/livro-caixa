@@ -78,6 +78,7 @@ function applyRaw(raw) {
   S.loaded = true;
   if (!S.ref) S.ref = cicloAtual();
   recompute(); render();
+  setTimeout(autoRecorrentes, 0);
 }
 
 async function act(p, okMsg) {
@@ -137,10 +138,8 @@ function insights(R) {
   };
   const dupl = L.comprasDuplicadas(S.items, F());
   if (dupl.length) out.push({ k: 'conferir', n: 'atencao', tit: `${dupl.length === 1 ? 'Uma compra parcelada está' : dupl.length + ' compras parceladas estão'} contada${dupl.length === 1 ? '' : 's'} em dobro`, txt: `${dupl.map(l => `${l[0].desc} (${l[0].n}x)`).join(', ')} entrou mais de uma vez, por faturas importadas fora de ordem. Corrigir mantém um lançamento só.`, acao: 'duplicadas' });
-  if (R >= L.addMonths(atual, -1)) {
-    const rc = L.recorrentes(S.items, F(), S.cfg.fixos, S.cfg.recIgnorar);
-    if (rc.length) out.push({ k: 'recorrentes', n: 'info', tit: `${rc.length} cobranças se repetem todo mês no cartão`, txt: `Somam ${brl0(sum(rc, x => x.v))} por mês (${rc.slice(0, 3).map(x => x.desc).join(', ')}${rc.length > 3 ? '...' : ''}). Cadastre como fixas e o fluxo passa a prever os próximos meses sem esperar a fatura.`, acao: 'recorrentes' });
-  }
+  const novosAuto = S.cfg.fixos.filter(f => f.auto && !f.rev && !f.fim);
+  if (novosAuto.length) out.push({ k: 'recorrentes', n: 'info', tit: `${novosAuto.length} fixo${novosAuto.length > 1 ? 's' : ''} detectado${novosAuto.length > 1 ? 's' : ''} nas faturas`, txt: `${novosAuto.slice(0, 3).map(f => f.desc).join(', ')}${novosAuto.length > 3 ? '...' : ''}: ${brl0(sum(novosAuto, f => f.v))} por mês, já na previsão dos próximos meses. Confira a categoria.`, acao: 'recorrentes' });
   if (!temDados(m)) return out;
   const pre = corrente ? 'No ritmo atual, ' : '';
 
@@ -307,7 +306,7 @@ function vPainel(R) {
     atacar: () => {
       const l = ins(), mostra = S.todosInsights ? l : l.slice(0, 5);
       return `<section class="card"><h3>Onde atacar <small>${l.length} pontos</small></h3>
-    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.acao === 'duplicadas' ? `<button class="btn sm" style="margin-top:8px" data-act="corrigirDup">Corrigir agora</button>` : ''}${i.acao === 'recorrentes' ? `<button class="btn sm" style="margin-top:8px" data-act="irRecorrentes">Revisar e cadastrar</button>` : ''}${i.acao === 'conferir' ? `<button class="btn sm" style="margin-top:8px" data-act="irMes" data-s="${i.s}">Abrir fatura</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
+    <div class="ins">${mostra.map(i => `<div class="in" data-n="${i.n}"><div><b>${esc(i.tit)}</b><p>${esc(i.txt)}</p>${i.acao === 'reserva' ? `<button class="btn sm" style="margin-top:8px" data-act="criarReserva" data-v="${i.alvo}">Criar meta de ${brl0(i.alvo)}</button>` : ''}${i.acao === 'duplicadas' ? `<button class="btn sm" style="margin-top:8px" data-act="corrigirDup">Corrigir agora</button>` : ''}${i.acao === 'recorrentes' ? `<button class="btn sm" style="margin-top:8px" data-act="irRecorrentes">Revisar</button>` : ''}${i.acao === 'conferir' ? `<button class="btn sm" style="margin-top:8px" data-act="irMes" data-s="${i.s}">Abrir fatura</button>` : ''}${i.cat ? `<button class="btn sm" style="margin-top:8px" data-act="verCat" data-cat="${esc(i.cat)}">Ver lançamentos</button>` : ''}</div><div class="g">${i.g > 0 ? `até<strong>${brl0(i.g)}</strong>/mês` : ''}</div></div>`).join('') || '<p class="mut">Nenhum alerta para este mês.</p>'}</div>
     ${l.length > 5 ? `<button class="btn sm" style="margin-top:10px" data-act="todosIns">${S.todosInsights ? 'Mostrar menos' : `Ver todos (${l.length})`}</button>` : ''}
   </section>`;
     },
@@ -536,6 +535,21 @@ function ultimaFaturaFechada() {
   }
   return null;
 }
+function fixoDeRec(x, todas) {
+  const nome = limpaDesc(x.desc), rep = todas.filter(y => limpaDesc(y.desc) === nome).length > 1;
+  return { id: uid(), desc: nome + (rep ? ' ' + brl(x.v) : ''), v: x.v, t: 'd', cat: x.cat, pg: 'cc', dia: x.dia, ini: x.ini, fim: null, chave: x.chave, recId: x.id, auto: true };
+}
+// Cobrança recorrente encontrada nas faturas vira fixo sozinha. Só grava com os dados já
+// confirmados pelo servidor (nunca sobre uma configuração ainda não carregada).
+function autoRecorrentes() {
+  if (S.autoRecBusy || !S.store || !S.loaded || !S.temCfg) return;
+  if (!['ok', 'pendente', 'local', 'demo'].includes(S.status) && !S.demo) return;
+  const sug = L.recorrentes(S.items, F(), S.cfg.fixos, S.cfg.recIgnorar);
+  if (!sug.length) return;
+  S.autoRecBusy = true;
+  S.cfg.fixos = [...S.cfg.fixos, ...sug.map(x => fixoDeRec(x, sug))];
+  act(salvarCfg(), `${sug.length} cobrança${sug.length > 1 ? 's' : ''} recorrente${sug.length > 1 ? 's' : ''} adicionada${sug.length > 1 ? 's' : ''} em Fixos`).finally(() => { S.autoRecBusy = false; });
+}
 const limpaDesc = d => d.replace(/([A-Za-z])\d{3,}/g, '$1').replace(/\s*\*\s*/g, ' ').replace(/\s+/g, ' ').trim();
 function secRecorrentes() {
   const sug = L.recorrentes(S.items, F(), S.cfg.fixos, S.cfg.recIgnorar);
@@ -561,12 +575,13 @@ function vFixos(R) {
   const bloco = (t, tit) => {
     const l = fx.filter(f => f.t === t).sort((a, b) => b.v - a.v);
     return `<section class="card"><h3>${tit} <small>${brl(sum(l.filter(f => ativos.includes(f)), f => f.v))}/mês</small></h3>
-    ${l.length ? `<div class="tw" style="margin-top:10px;border:0"><table><thead><tr><th>Descrição</th><th>Dia</th><th>Forma</th><th class="r">Valor</th></tr></thead><tbody>
-    ${l.map(f => `<tr class="click" data-act="editFixo" data-id="${esc(f.id)}" style="${ativos.includes(f) ? '' : 'opacity:.5'}"><td>${esc(f.desc)}<span class="d2">${esc(catById(f.cat).nome)}${f.chave ? ' · reconhecido na fatura' : ''}${f.fim ? ` · até ${L.fmtYM(f.fim)}` : ''}${f.ini && f.ini > R ? ` · a partir de ${L.fmtYM(f.ini)}` : ''}</span></td><td class="ink2">${f.dia === 'util' ? 'último útil' : 'dia ' + f.dia}</td><td class="ink2">${f.t === 'r' ? '—' : f.pg === 'cc' ? 'Cartão' : 'Conta'}</td><td class="r num">${brl(f.v)}</td></tr>`).join('')}
+    ${l.length ? `<div class="tw" style="margin-top:10px;border:0"><table><thead><tr><th>Descrição</th><th>Categoria</th><th class="r">Valor</th></tr></thead><tbody>
+    ${l.map(f => `<tr class="click" data-act="editFixo" data-id="${esc(f.id)}" style="${ativos.includes(f) ? '' : 'opacity:.5'}"><td>${esc(f.desc)}${f.auto && !f.rev ? ' <span class="pill acc">novo</span>' : ''}<span class="d2">${f.dia === 'util' ? 'último dia útil' : 'dia ' + f.dia}${f.t === 'd' ? (f.pg === 'cc' ? ' · cartão' : ' · conta') : ''}${f.chave ? ' · reconhecido na fatura' : ''}${f.fim ? ` · até ${L.fmtYM(f.fim)}` : ''}${f.ini && f.ini > R ? ` · a partir de ${L.fmtYM(f.ini)}` : ''}</span></td><td><select class="i catsel" data-act="fixoCatSel" data-id="${esc(f.id)}" aria-label="Categoria de ${esc(f.desc)}">${optCats(f.t, f.cat)}</select></td><td class="r num">${brl(f.v)}</td></tr>`).join('')}
     </tbody></table></div>` : `<p class="mut">Nenhum cadastrado.</p>`}
     <button class="btn sm" style="margin-top:10px" data-act="novoFixo" data-t="${t}">Adicionar ${t === 'r' ? 'receita' : 'despesa'} fixa</button></section>`;
   };
-  return `${secRecorrentes()}<div class="grid g4" style="margin-bottom:14px">
+  const novos = fx.filter(f => f.auto && !f.rev);
+  return `${novos.length ? `<div class="hint row" style="margin-bottom:14px"><span><b>${novos.length} fixo${novos.length > 1 ? 's' : ''} detectado${novos.length > 1 ? 's' : ''} nas faturas</b> (marcados como novo). Ajuste a categoria na lista. Se algum não for fixo, abra e exclua: ele não volta.</span><span class="sp"></span><button class="btn sm" data-act="revisarTodos">Está tudo certo</button></div>` : ''}${secRecorrentes()}<div class="grid g4" style="margin-bottom:14px">
     <div class="card tile"><span class="lbl">Receitas fixas</span><span class="mid num">${brl(rec)}</span></div>
     <div class="card tile"><span class="lbl">Despesas fixas</span><span class="mid num">${brl(desp)}</span></div>
     <div class="card tile"><span class="lbl">Fixos / renda</span><span class="mid num ${rec && desp / rec > 0.5 ? 'neg' : ''}">${pct(rec ? desp / rec : null)}</span><span class="sub">referência: até 50%</span></div>
@@ -1013,12 +1028,13 @@ document.addEventListener('click', async e => {
       const its = S.items.filter(i => i.t === 'd' && i.pg === 'cc' && i.fat === b.dataset.s);
       if (await act(excluirItens(its), `${its.length} lançamentos excluídos`)) render();
     }); break;
-    case 'irRecorrentes': irPara('fixos'); setTimeout(() => $('#recorrentes')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); break;
+    case 'irRecorrentes': irPara('fixos'); break;
+    case 'fixoCatSel': break;
+    case 'revisarTodos': S.cfg.fixos = S.cfg.fixos.map(f => f.auto ? { ...f, rev: true } : f); act(salvarCfg(), 'Fixos marcados como revisados'); render(); break;
     case 'recCadastrar': {
       const sel = (secRecorrentes.sug || []).filter((x, i) => $('#rc-' + i)?.checked);
       if (!sel.length) return toast('Nada marcado.');
-      const nomes = (secRecorrentes.sug || []).map(x => limpaDesc(x.desc));
-      S.cfg.fixos = [...S.cfg.fixos, ...sel.map(x => ({ id: uid(), desc: limpaDesc(x.desc) + (nomes.filter(n => n === limpaDesc(x.desc)).length > 1 ? ' ' + brl(x.v) : ''), v: x.v, t: 'd', cat: x.cat, pg: 'cc', dia: x.dia, ini: x.ini, fim: null, chave: x.chave }))];
+      S.cfg.fixos = [...S.cfg.fixos, ...sel.map(x => ({ ...fixoDeRec(x, secRecorrentes.sug), auto: false }))];
       if (await act(salvarCfg(), `${sel.length} fixos cadastrados`)) render();
       break;
     }
@@ -1056,7 +1072,7 @@ document.addEventListener('click', async e => {
       const { f, t } = modalFixo.ctx, v = valNum($('#f-v').value), desc = $('#f-desc').value.trim();
       if (!desc || !isFinite(v)) return toast('Preencha descrição e valor.');
       const dia = $('#f-dia').value;
-      const nf = { id: f?.id || uid(), desc, v, t, cat: $('#f-cat').value, pg: t === 'r' ? 'conta' : $('#f-pg').value, dia: dia === 'util' ? 'util' : +dia, ini: $('#f-ini').value || null, fim: $('#f-fim').value || null, ...(f && f.chave ? { chave: f.chave } : {}) };
+      const nf = { id: f?.id || uid(), desc, v, t, cat: $('#f-cat').value, pg: t === 'r' ? 'conta' : $('#f-pg').value, dia: dia === 'util' ? 'util' : +dia, ini: $('#f-ini').value || null, fim: $('#f-fim').value || null, ...(f && f.chave ? { chave: f.chave, recId: f.recId || null } : {}), ...(f && f.auto ? { auto: true, rev: true } : {}) };
       let msg = 'Fixo salvo';
       if (!f) S.cfg.fixos = [...S.cfg.fixos, nf];
       else {
@@ -1074,7 +1090,7 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'encerrarFixo': { const { f } = modalFixo.ctx; S.cfg.fixos = S.cfg.fixos.map(x => x.id === f.id ? { ...x, fim: L.addMonths(R, -1) } : x); if (await act(salvarCfg(), `${f.desc} encerrado em ${L.fmtYM(L.addMonths(R, -1))}`)) fecharModal(); break; }
-    case 'delFixo': confirmar(b, 'Apaga de todos os meses. Confirmar?', async () => { const { f } = modalFixo.ctx; S.cfg.fixos = S.cfg.fixos.filter(x => x.id !== f.id); if (await act(salvarCfg(), 'Fixo excluído')) fecharModal(); }); break;
+    case 'delFixo': confirmar(b, 'Apaga de todos os meses. Confirmar?', async () => { const { f } = modalFixo.ctx; S.cfg.fixos = S.cfg.fixos.filter(x => x.id !== f.id); if (f.recId) S.cfg.recIgnorar = [...S.cfg.recIgnorar, f.recId].slice(-200); if (await act(salvarCfg(), 'Fixo excluído')) fecharModal(); }); break;
     case 'novaMeta': modalMeta(); break;
     case 'criarReserva': {
       let v = +b.dataset.v;
@@ -1161,6 +1177,11 @@ document.addEventListener('submit', async e => {
   }
 });
 document.addEventListener('change', e => {
+  if (e.target.dataset && e.target.dataset.act === 'fixoCatSel') {
+    const id = e.target.dataset.id, cat = e.target.value;
+    S.cfg.fixos = S.cfg.fixos.map(f => f.id === id ? { ...f, cat, ...(f.auto ? { rev: true } : {}) } : f);
+    act(salvarCfg(), 'Categoria atualizada'); return;
+  }
   const f = e.target.files && e.target.files[0];
   if (!f) return;
   const rd = new FileReader();
@@ -1196,7 +1217,7 @@ async function boot() {
   const fb = await Promise.race([fbPronto, new Promise(r => setTimeout(() => r(undefined), 15000))]);
   const ligar = store => {
     S.store = store;
-    store.subscribe(raw => { S.realRaw = raw; if (!S.demo) applyRaw(raw); }, (st, e) => { S.status = st; if (e) console.error(e); renderStatus(); });
+    store.subscribe(raw => { S.realRaw = raw; if (!S.demo) applyRaw(raw); }, (st, e) => { S.status = st; if (e) console.error(e); renderStatus(); setTimeout(autoRecorrentes, 0); });
   };
   if (fb === null || (fb === undefined && !navigator.onLine)) { ligar(MemStore('livro-caixa-local')); return; }
   if (fb === undefined) { S.status = 'erro'; $('#main').innerHTML = '<div class="card empty"><h2>Não consegui carregar</h2><p>Verifique a internet e recarregue a página.</p></div>'; renderStatus(); return; }

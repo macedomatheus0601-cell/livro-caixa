@@ -232,7 +232,7 @@ const L = (() => {
         if (diffMonths(refs[refs.length - 1], ate) > 1) continue;
         const u = c.reduce((a, b) => (a.ref > b.ref ? a : b));
         const id = k + '|' + Math.round(u.v);
-        if (ign.has(id)) continue;
+        if (ign.has(id) || (fixos || []).some(f => f.recId === id)) continue;
         if ((fixos || []).some(f => f.t === 'd' && (!f.fim || f.fim >= u.ref) && (f.chave || chaveRec(f.desc)) === k && Math.abs(f.v - u.v) <= Math.max(1, u.v * 0.1))) continue;
         out.push({ id, chave: k, desc: u.it.desc, v: u.v, cat: u.it.cat, dia: +u.it.d.slice(8, 10), refs, ini: refs[0] });
       }

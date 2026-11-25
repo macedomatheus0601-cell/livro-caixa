@@ -1,0 +1,17 @@
+{
+  "name": "Livro-Caixa",
+  "short_name": "Livro-Caixa",
+  "description": "Planejamento financeiro pessoal pelo ciclo da fatura do cartão.",
+  "lang": "pt-BR",
+  "start_url": "./#painel",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F2F4F7",
+  "theme_color": "#1C5B88",
+  "icons": [
+    { "src": "icones/icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icones/icone-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icones/icone-512-mascara.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

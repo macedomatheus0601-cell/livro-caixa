@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Livro-Caixa</title>
+<meta name="description" content="Planejamento financeiro pessoal pelo ciclo da fatura do cartão.">
+<meta name="theme-color" content="#1C5B88">
+<meta name="color-scheme" content="light dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icones/icone-192.png">
+<link rel="apple-touch-icon" href="icones/icone-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Livro-Caixa">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="top-row">
+      <div class="brand"><i>LC</i><span>Livro-Caixa</span></div>
+      <div class="monthnav">
+        <button class="ibtn" data-act="mes" data-k="-1" aria-label="Mês anterior"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3 5 8l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <b id="mesLbl">—</b>
+        <button class="ibtn" data-act="mes" data-k="1" aria-label="Próximo mês"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="chip-hoje" data-act="hoje">Hoje</button>
+      </div>
+      <div class="status" id="status">conectando</div>
+    </div>
+    <div class="cyc" id="cyc"></div>
+    <nav class="tabs" id="tabs"></nav>
+  </div>
+</header>
+<div class="banner" id="banner" hidden></div>
+<main class="wrap" id="main"><div class="empty"><h2>Abrindo seu livro-caixa</h2><p>Carregando lançamentos, fixos e metas.</p></div></main>
+<nav class="bottom" id="bnav"></nav>
+<button class="fab" data-act="novo" aria-label="Novo lançamento">+</button>
+<div id="ov" hidden><div id="md" role="dialog" aria-modal="true"></div></div>
+<div id="tip" hidden></div>
+<div id="toast" hidden></div>
+
+<script src="js/config.js"></script>
+<script src="js/logic.js" defer></script>
+<script src="js/app.js" defer></script>
+<script type="module" src="js/firebase.js"></script>
+</body>
+</html>

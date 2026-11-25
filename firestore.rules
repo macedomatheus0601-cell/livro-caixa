@@ -1,0 +1,10 @@
+rules_version = '2';
+// Cada pessoa logada lê e grava só a própria pasta users/{seu uid}.
+// Nada fora dela pode ser lido ou gravado por ninguém.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{doc=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
